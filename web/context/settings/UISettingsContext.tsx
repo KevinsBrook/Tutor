@@ -19,11 +19,11 @@ const LANGUAGE_STORAGE_KEY = "deeptutor-language";
 // Helper to get initial settings
 function getInitialSettings(): UISettings {
   if (typeof window === "undefined") {
-    return { theme: "light", language: "en" };
+    return { theme: "light", language: "zh" };
   }
   const initialTheme = initializeTheme();
   const storedLanguage =
-    (localStorage.getItem(LANGUAGE_STORAGE_KEY) as Language) || "en";
+    (localStorage.getItem(LANGUAGE_STORAGE_KEY) as Language) || "zh";
   return { theme: initialTheme, language: storedLanguage };
 }
 
@@ -54,7 +54,7 @@ export function UISettingsProvider({
       if (res.ok) {
         const data = await res.json();
         const serverTheme = data.ui?.theme || "light";
-        const serverLanguage = data.ui?.language || "en";
+        const serverLanguage = data.ui?.language || "zh";
         startTransition(() => {
           setUiSettings({
             theme: serverTheme,
@@ -79,8 +79,8 @@ export function UISettingsProvider({
     const storedTheme = getStoredTheme();
     const storedLanguage =
       typeof window !== "undefined"
-        ? (localStorage.getItem(LANGUAGE_STORAGE_KEY) as Language) || "en"
-        : "en";
+        ? (localStorage.getItem(LANGUAGE_STORAGE_KEY) as Language) || "zh"
+        : "zh";
 
     const themeToUse = storedTheme || "light";
     startTransition(() => {

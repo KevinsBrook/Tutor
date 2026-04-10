@@ -16,11 +16,11 @@ INTERFACE_SETTINGS_FILE = PROJECT_ROOT / "data" / "user" / "settings" / "interfa
 
 DEFAULT_UI_SETTINGS: dict[str, Any] = {
     "theme": "light",
-    "language": "en",
+    "language": "zh",
 }
 
 
-def _normalize_language(language: Any, default: str = "en") -> str:
+def _normalize_language(language: Any, default: str = "zh") -> str:
     """
     Normalize language codes:
     - en/english -> en
@@ -38,8 +38,8 @@ def _normalize_language(language: Any, default: str = "en") -> str:
 
     # Fall back to default
     if isinstance(default, str):
-        return _normalize_language(default, "en")
-    return "en"
+        return _normalize_language(default, "zh")
+    return "zh"
 
 
 def get_ui_settings() -> dict[str, Any]:
@@ -65,14 +65,14 @@ def get_ui_settings() -> dict[str, Any]:
     return DEFAULT_UI_SETTINGS.copy()
 
 
-def get_ui_language(default: str = "en") -> str:
+def get_ui_language(default: str = "zh") -> str:
     """
     Get current UI language.
 
     Priority:
     1) interface.json
     2) provided default
-    3) 'en'
+    3) 'zh'
     """
     settings = get_ui_settings()
     return _normalize_language(settings.get("language"), default)

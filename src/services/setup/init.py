@@ -160,7 +160,7 @@ def init_user_directories(project_root: Path | None = None) -> None:
         settings_dir.mkdir(parents=True, exist_ok=True)
         interface_file = settings_dir / "interface.json"
         if not interface_file.exists():
-            initial_settings = {"theme": "light", "language": "en", "output_language": "en"}
+            initial_settings = {"theme": "light", "language": "zh", "output_language": "zh"}
             try:
                 with open(interface_file, "w", encoding="utf-8") as f:
                     json.dump(initial_settings, f, indent=2, ensure_ascii=False)
@@ -204,7 +204,7 @@ def init_user_directories(project_root: Path | None = None) -> None:
         settings_dir.mkdir(parents=True, exist_ok=True)
         interface_file = settings_dir / "interface.json"
         if not interface_file.exists():
-            initial_settings = {"theme": "light", "language": "en", "output_language": "en"}
+            initial_settings = {"theme": "light", "language": "zh", "output_language": "zh"}
             try:
                 with open(interface_file, "w", encoding="utf-8") as f:
                     json.dump(initial_settings, f, indent=2, ensure_ascii=False)
