@@ -368,11 +368,11 @@ export default function IdeaGenPage() {
   };
 
   return (
-    <div className="h-screen flex gap-4 p-4 animate-fade-in">
+    <div className="h-[calc(100vh-7rem)] min-h-0 flex gap-4 p-3 animate-fade-in rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/72 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/72">
       {/* Left Panel: Source Selection */}
       <div className="flex-[1_1_33%] min-w-[350px] max-w-[500px] flex flex-col gap-4">
         {/* Multi-Notebook Selection */}
-        <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+        <div className="flex-1 rounded-2xl border border-amber-200/60 bg-amber-50/45 shadow-[0_10px_30px_rgba(245,158,11,0.16)] dark:border-amber-900/50 dark:bg-amber-950/18 flex flex-col overflow-hidden">
           <div className="p-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 flex justify-between items-center">
             <h2 className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-amber-600 dark:text-amber-400" />
@@ -591,7 +591,7 @@ export default function IdeaGenPage() {
       </div>
 
       {/* Right Panel: Generated Ideas */}
-      <div className="flex-[2_1_67%] min-w-0 flex flex-col bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div className="flex-[2_1_67%] min-w-0 flex flex-col rounded-2xl border border-orange-200/60 bg-orange-50/45 shadow-[0_10px_30px_rgba(249,115,22,0.16)] dark:border-orange-900/50 dark:bg-orange-950/18 overflow-hidden">
         {/* Header */}
         <div className="p-4 border-b border-slate-100 dark:border-slate-700 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 flex justify-between items-center">
           <div className="flex items-center gap-3">

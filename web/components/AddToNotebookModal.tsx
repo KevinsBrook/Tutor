@@ -152,17 +152,17 @@ export default function AddToNotebookModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in">
-      <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col animate-in zoom-in-95">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-md animate-in fade-in">
+      <div className="flex max-h-[86vh] w-[560px] flex-col overflow-hidden rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/95 shadow-[0_24px_80px_rgba(2,6,23,0.28)] animate-in zoom-in-95 dark:border-slate-700 dark:bg-slate-900/90">
         {/* Header */}
-        <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-900/30 dark:to-purple-900/30 rounded-t-2xl">
+        <div className="flex items-center justify-between border-b border-slate-200/60 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-900/70">
           <h3 className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <Book className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
             {t("Add to Notebook")}
           </h3>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-white/50 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            className="rounded-xl border border-slate-200/80 bg-white p-1.5 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
           >
             <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
           </button>

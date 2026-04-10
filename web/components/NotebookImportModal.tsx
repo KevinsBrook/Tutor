@@ -162,26 +162,28 @@ export default function NotebookImportModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-[800px] h-[600px] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="flex h-[680px] w-[980px] max-w-full flex-col overflow-hidden rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/95 shadow-[0_24px_80px_rgba(2,6,23,0.28)] animate-in zoom-in-95 duration-200 dark:border-slate-700 dark:bg-slate-900/90">
         {/* Header */}
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <div className="flex items-center justify-between border-b border-slate-200/60 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-900/70">
           <div className="flex items-center gap-2">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <BookOpen className="w-5 h-5 text-blue-600" />
+            <div className="rounded-xl bg-sky-100 p-2 dark:bg-sky-900/40">
+              <BookOpen className="w-5 h-5 text-sky-700 dark:text-sky-300" />
             </div>
             <div>
-              <h2 className="font-bold text-slate-900">{dialogTitle}</h2>
-              <p className="text-xs text-slate-500">
+              <h2 className="font-bold text-slate-900 dark:text-slate-100">
+                {dialogTitle}
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 {t("Select content from your notebooks to import")}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-slate-200 rounded-full transition-colors"
+            className="rounded-xl border border-slate-200/80 bg-white p-1.5 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
           >
-            <X className="w-5 h-5 text-slate-500" />
+            <X className="w-5 h-5 text-slate-500 dark:text-slate-300" />
           </button>
         </div>
 

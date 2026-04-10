@@ -141,42 +141,60 @@ export default function HomePage() {
       icon: Calculator,
       label: t("Smart Problem Solving"),
       href: "/solver",
-      color: "blue",
+      cardClass:
+        "border-cyan-200/70 bg-cyan-50/70 text-cyan-700 hover:border-cyan-400 dark:border-cyan-800 dark:bg-cyan-950/30 dark:text-cyan-300",
+      iconClass:
+        "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300",
       description: t("Multi-agent reasoning"),
     },
     {
       icon: PenTool,
       label: t("Generate Practice Questions"),
       href: "/question",
-      color: "purple",
+      cardClass:
+        "border-fuchsia-200/70 bg-fuchsia-50/70 text-fuchsia-700 hover:border-fuchsia-400 dark:border-fuchsia-800 dark:bg-fuchsia-950/30 dark:text-fuchsia-300",
+      iconClass:
+        "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/50 dark:text-fuchsia-300",
       description: t("Auto-validated quizzes"),
     },
     {
       icon: Microscope,
       label: t("Deep Research Reports"),
       href: "/research",
-      color: "emerald",
+      cardClass:
+        "border-emerald-200/70 bg-emerald-50/70 text-emerald-700 hover:border-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300",
+      iconClass:
+        "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300",
       description: t("Comprehensive analysis"),
     },
     {
       icon: Lightbulb,
       label: t("Generate Novel Ideas"),
       href: "/ideagen",
-      color: "amber",
+      cardClass:
+        "border-amber-200/70 bg-amber-50/70 text-amber-700 hover:border-amber-400 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300",
+      iconClass:
+        "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300",
       description: t("Brainstorm & synthesize"),
     },
     {
       icon: GraduationCap,
       label: t("Guided Learning"),
       href: "/guide",
-      color: "indigo",
+      cardClass:
+        "border-indigo-200/70 bg-indigo-50/70 text-indigo-700 hover:border-indigo-400 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300",
+      iconClass:
+        "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300",
       description: t("Step-by-step tutoring"),
     },
     {
       icon: Edit3,
       label: t("Co-Writer"),
       href: "/co_writer",
-      color: "pink",
+      cardClass:
+        "border-rose-200/70 bg-rose-50/70 text-rose-700 hover:border-rose-400 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-300",
+      iconClass:
+        "bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300",
       description: t("Collaborative writing"),
     },
   ];
@@ -184,21 +202,25 @@ export default function HomePage() {
   const hasMessages = chatState.messages.length > 0;
 
   return (
-    <div className="h-screen flex flex-col animate-fade-in">
+    <div className="animate-fade-in flex h-[calc(100vh-7rem)] min-h-0 flex-col overflow-hidden">
       {/* Empty State / Welcome Screen */}
       {!hasMessages && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6">
-          <div className="text-center max-w-2xl mx-auto mb-8">
-            <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-3 tracking-tight">
+        <div className="flex-1 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/85 px-6 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/80">
+          <div className="mx-auto grid h-full w-full max-w-6xl min-h-0 gap-6 py-8 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="flex min-h-0 flex-col justify-center">
+              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-indigo-200/70 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300">
+                <Sparkles className="h-3.5 w-3.5" />
+                {t("DeepTutor Workspace")}
+              </div>
+              <h1 className="mt-4 text-4xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
               {t("Welcome to DeepTutor")}
-            </h1>
-            <p className="text-lg text-slate-500 dark:text-slate-400">
+              </h1>
+              <p className="mt-3 text-lg text-slate-500 dark:text-slate-400">
               {t("How can I help you today?")}
-            </p>
-          </div>
+              </p>
 
-          {/* Input Box - Centered */}
-          <div className="w-full max-w-2xl mx-auto mb-12">
+              {/* Input Box - Centered */}
+              <div className="mt-8 w-full max-w-2xl rounded-2xl border border-white/70 bg-white/70 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/70">
             {/* Mode Toggles */}
             <div className="flex items-center justify-between mb-3 px-1">
               <div className="flex items-center gap-2">
@@ -260,8 +282,8 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Input Field */}
-            <div className="relative">
+                {/* Input Field */}
+                <div className="relative">
               <input
                 ref={inputRef}
                 type="text"
@@ -283,36 +305,34 @@ export default function HomePage() {
                   <Send className="w-5 h-5" />
                 )}
               </button>
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Quick Actions Grid */}
-          <div className="w-full max-w-3xl mx-auto">
-            <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4 text-center">
-              {t("Explore Modules")}
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {quickActions.map((action, i) => (
-                <Link
-                  key={i}
-                  href={action.href}
-                  className={`group p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:shadow-lg hover:border-${action.color}-300 dark:hover:border-${action.color}-600 transition-all`}
-                >
-                  <div
-                    className={`w-10 h-10 rounded-xl bg-${action.color}-100 dark:bg-${action.color}-900/30 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform`}
+            <div className="rounded-2xl border border-white/70 bg-white/65 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/65">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                {t("Explore Modules")}
+              </h3>
+              <div className="space-y-3">
+                {quickActions.map((action, i) => (
+                  <Link
+                    key={i}
+                    href={action.href}
+                    className={`group flex items-center gap-3 rounded-2xl border px-4 py-3 transition-all hover:shadow-lg ${action.cardClass}`}
                   >
-                    <action.icon
-                      className={`w-5 h-5 text-${action.color}-600 dark:text-${action.color}-400`}
-                    />
-                  </div>
-                  <h4 className="font-semibold text-slate-900 dark:text-slate-100 text-sm mb-1">
-                    {action.label}
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {action.description}
-                  </p>
-                </Link>
-              ))}
+                    <div
+                      className={`h-10 w-10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform ${action.iconClass}`}
+                    >
+                      <action.icon className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-sm font-semibold">{action.label}</h4>
+                      <p className="text-xs opacity-85">{action.description}</p>
+                    </div>
+                    <ExternalLink className="h-4 w-4 opacity-60" />
+                  </Link>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -320,9 +340,9 @@ export default function HomePage() {
 
       {/* Chat Interface - When there are messages */}
       {hasMessages && (
-        <>
+        <div className="grid h-full min-h-0 grid-rows-[auto_1fr_auto] rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/88 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/82">
           {/* Header Bar */}
-          <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-6 py-3 border-b border-white/60 dark:border-slate-700 bg-white/75 dark:bg-slate-900/70 backdrop-blur-xl rounded-t-3xl">
             <div className="flex items-center gap-3">
               {/* Mode Toggles */}
               <button
@@ -401,29 +421,29 @@ export default function HomePage() {
           {/* Messages Area */}
           <div
             ref={messagesContainerRef}
-            className="flex-1 overflow-y-auto px-6 py-6 space-y-6"
+            className="min-h-0 overflow-y-auto px-6 py-6 space-y-6 bg-[color:var(--ui-panel)]/80"
           >
             {chatState.messages.map((msg, idx) => (
               <div
                 key={idx}
-                className="flex gap-4 w-full max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-2"
+                className={`flex w-full max-w-4xl animate-in fade-in slide-in-from-bottom-2 ${msg.role === "user" ? "ml-auto justify-end" : "mr-auto justify-start"}`}
               >
                 {msg.role === "user" ? (
-                  <>
-                    <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center shrink-0">
+                  <div className="order-2 w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center shrink-0">
                       <User className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                    </div>
-                    <div className="flex-1 bg-slate-100 dark:bg-slate-700 px-4 py-3 rounded-2xl rounded-tl-none text-slate-800 dark:text-slate-200">
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-lg shadow-blue-500/30">
+                    <Bot className="w-4 h-4 text-white" />
+                  </div>
+                )}
+                <div className={`max-w-[86%] ${msg.role === "user" ? "order-1 mr-3" : "ml-3"} space-y-3`}>
+                  {msg.role === "user" ? (
+                    <div className="bg-slate-100 dark:bg-slate-700 px-4 py-3 rounded-2xl rounded-tr-none text-slate-800 dark:text-slate-200">
                       {msg.content}
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-lg shadow-blue-500/30">
-                      <Bot className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="flex-1 space-y-3">
-                      <div className="bg-white dark:bg-slate-800 px-5 py-4 rounded-2xl rounded-tl-none border border-slate-200 dark:border-slate-700 shadow-sm">
+                  ) : (
+                    <div className="bg-white dark:bg-slate-800 px-5 py-4 rounded-2xl rounded-tl-none border border-slate-200 dark:border-slate-700 shadow-sm">
                         <div className="prose prose-slate dark:prose-invert prose-sm max-w-none">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm, remarkMath]}
@@ -440,43 +460,42 @@ export default function HomePage() {
                             <span>{t("Generating response...")}</span>
                           </div>
                         )}
-                      </div>
-
-                      {/* Sources */}
-                      {msg.sources &&
-                        (msg.sources.rag?.length ?? 0) +
-                          (msg.sources.web?.length ?? 0) >
-                          0 && (
-                          <div className="flex flex-wrap gap-2">
-                            {msg.sources.rag?.map((source, i) => (
-                              <div
-                                key={`rag-${i}`}
-                                className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-lg text-xs"
-                              >
-                                <BookOpen className="w-3 h-3" />
-                                <span>{source.kb_name}</span>
-                              </div>
-                            ))}
-                            {msg.sources.web?.slice(0, 3).map((source, i) => (
-                              <a
-                                key={`web-${i}`}
-                                href={source.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
-                              >
-                                <Globe className="w-3 h-3" />
-                                <span className="max-w-[150px] truncate">
-                                  {source.title || source.url}
-                                </span>
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
-                            ))}
-                          </div>
-                        )}
                     </div>
-                  </>
-                )}
+                  )}
+
+                  {/* Sources */}
+                  {msg.role !== "user" &&
+                    msg.sources &&
+                    (msg.sources.rag?.length ?? 0) + (msg.sources.web?.length ?? 0) >
+                      0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {msg.sources.rag?.map((source, i) => (
+                          <div
+                            key={`rag-${i}`}
+                            className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-lg text-xs"
+                          >
+                            <BookOpen className="w-3 h-3" />
+                            <span>{source.kb_name}</span>
+                          </div>
+                        ))}
+                        {msg.sources.web?.slice(0, 3).map((source, i) => (
+                          <a
+                            key={`web-${i}`}
+                            href={source.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+                          >
+                            <Globe className="w-3 h-3" />
+                            <span className="max-w-[150px] truncate">
+                              {source.title || source.url}
+                            </span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                </div>
               </div>
             ))}
 
@@ -508,7 +527,7 @@ export default function HomePage() {
           </div>
 
           {/* Input Area - Fixed at bottom */}
-          <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-6 py-4">
+          <div className="sticky bottom-0 z-10 border-t border-white/70 dark:border-slate-700 bg-white/90 dark:bg-slate-900/85 px-6 py-4 rounded-b-3xl">
             <div className="max-w-4xl mx-auto relative">
               <input
                 ref={inputRef}
@@ -533,7 +552,7 @@ export default function HomePage() {
               </button>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {/* Add to Notebook Modal */}

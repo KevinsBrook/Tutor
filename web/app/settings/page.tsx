@@ -92,33 +92,45 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
+      <div className="min-h-[calc(100vh-7rem)] flex items-center justify-center rounded-3xl border border-white/60 bg-white/60 dark:border-slate-700 dark:bg-slate-900/70">
         <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
-      <div className="max-w-6xl mx-auto p-6">
+    <div className="h-[calc(100vh-7rem)] overflow-y-auto">
+      <div className="mx-auto max-w-6xl p-2 md:p-4">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-xl">
+        <div className="mb-6 grid gap-3 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/88 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.18)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/82 md:grid-cols-[1.4fr_1fr]">
+          <div className="flex items-center gap-3 rounded-2xl border border-blue-200/70 bg-gradient-to-r from-blue-50/90 via-cyan-50/85 to-indigo-50/90 p-4 dark:border-blue-900/60 dark:from-blue-950/40 dark:via-slate-900 dark:to-indigo-950/40">
+            <div className="rounded-xl bg-blue-100 p-3 dark:bg-blue-900/30">
             <SettingsIcon className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                {t("Settings")}
+              </h1>
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                {t("Configure your AI services and preferences")}
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              {t("Settings")}
-            </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              {t("Configure your AI services and preferences")}
-            </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+              <span className="font-semibold">{t("Theme")}</span>
+              <p className="mt-1 opacity-80">{uiSettings.theme}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+              <span className="font-semibold">{t("Language")}</span>
+              <p className="mt-1 opacity-80">{uiSettings.language}</p>
+            </div>
           </div>
         </div>
 
         {/* General Settings - Theme & Language */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 mb-6">
-          <div className="flex flex-wrap items-center gap-6">
+        <div className="mb-6 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/90 p-4 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/85">
+          <div className="grid gap-4 lg:grid-cols-3">
             {/* Theme Toggle */}
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
@@ -156,7 +168,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Separator */}
-            <div className="h-8 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block" />
+            <div className="hidden h-8 w-px bg-slate-200 dark:bg-slate-700 lg:block" />
 
             {/* Language Selector */}
             <div className="flex items-center gap-3">
@@ -182,7 +194,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Separator */}
-            <div className="h-8 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block" />
+            <div className="hidden h-8 w-px bg-slate-200 dark:bg-slate-700 lg:block" />
 
             {/* Clear Data */}
             <div className="flex items-center gap-3">
@@ -207,8 +219,8 @@ export default function SettingsPage() {
 
         {/* Clear Confirmation Modal */}
         {showClearConfirm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 max-w-md mx-4 shadow-2xl">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-md">
+            <div className="mx-4 max-w-md rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/95 p-6 shadow-[0_24px_80px_rgba(2,6,23,0.28)] dark:border-slate-700 dark:bg-slate-900/90">
               <div className="flex items-center gap-3 mb-4">
                 <div className="p-3 bg-red-100 dark:bg-red-900/30 rounded-xl">
                   <AlertTriangle className="w-6 h-6 text-red-600 dark:text-red-400" />
@@ -250,7 +262,7 @@ export default function SettingsPage() {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-6">
+        <div className="mb-6 flex gap-1 rounded-2xl border border-white/60 bg-white/60 p-1.5 dark:border-slate-700 dark:bg-slate-900/70">
           {tabs.map((tab) => (
             <button
               key={tab.id}

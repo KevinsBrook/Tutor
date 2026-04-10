@@ -320,11 +320,11 @@ export default function ResearchPage() {
   };
 
   return (
-    <div className="h-screen animate-fade-in flex gap-4 p-4">
+    <div className="h-[calc(100vh-7rem)] min-h-0 animate-fade-in flex gap-4 p-3 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/72 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/72">
       {/* LEFT PANEL */}
       <div className="flex-[1_1_33%] min-w-[350px] max-w-[500px] flex flex-col gap-4 h-full">
         {/* Config Header */}
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col gap-4">
+        <div className="p-4 rounded-2xl border border-emerald-200/60 bg-emerald-50/45 shadow-[0_10px_30px_rgba(16,185,129,0.18)] dark:border-emerald-900/50 dark:bg-emerald-950/18 flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
               <Settings className="w-5 h-5 text-slate-500 dark:text-slate-400" />
@@ -447,8 +447,8 @@ export default function ResearchPage() {
         </div>
 
         {/* Chat Interface */}
-        <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
-          <div className="p-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
+        <div className="flex-1 rounded-2xl border border-indigo-200/60 bg-indigo-50/45 shadow-[0_10px_30px_rgba(99,102,241,0.18)] dark:border-indigo-900/50 dark:bg-indigo-950/18 flex flex-col overflow-hidden">
+          <div className="p-3 border-b border-white/70 dark:border-slate-700 bg-white/70 dark:bg-slate-900/65 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
             <MessageSquare className="w-4 h-4" />
             {t("Topic Assistant")}
           </div>
@@ -495,7 +495,7 @@ export default function ResearchPage() {
               </div>
             ))}
           </div>
-          <div className="p-3 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700">
+          <div className="p-3 bg-white/70 dark:bg-slate-900/65 border-t border-white/70 dark:border-slate-700 backdrop-blur-xl">
             <div className="relative flex items-center gap-2">
               <input
                 type="text"
@@ -537,7 +537,7 @@ export default function ResearchPage() {
       </div>
 
       {/* RIGHT PANEL: Research Dashboard */}
-      <div className="flex-[2_1_67%] min-w-0 flex flex-col h-full overflow-hidden bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 relative">
+      <div className="flex-[2_1_67%] min-w-0 flex flex-col h-full overflow-hidden rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/88 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/82 relative">
         <ResearchDashboard
           state={state}
           selectedTaskId={selectedTaskId}

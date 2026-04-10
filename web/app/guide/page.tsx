@@ -79,10 +79,10 @@ export default function GuidePage() {
   };
 
   return (
-    <div className="h-screen flex gap-0 p-4 animate-fade-in relative">
+    <div className="relative flex h-[calc(100vh-7rem)] min-h-0 gap-4 animate-fade-in rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/72 p-3 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/72">
       {/* LEFT PANEL: Chat & Control */}
       <div
-        className={`flex flex-col gap-4 h-full transition-all duration-300 flex-shrink-0 mr-4 ${sidebarCollapsed ? "overflow-hidden" : ""}`}
+        className={`flex h-full flex-col gap-4 rounded-2xl border border-slate-200/70 bg-white/70 p-3 transition-all duration-300 dark:border-slate-700 dark:bg-slate-900/75 ${sidebarCollapsed ? "overflow-hidden" : ""}`}
         style={{
           width: sidebarCollapsed ? 0 : `${leftWidthPercent}%`,
           minWidth: sidebarCollapsed
@@ -133,14 +133,14 @@ export default function GuidePage() {
 
       {/* RIGHT PANEL: Interactive Content */}
       <div
-        className="flex flex-col h-full overflow-hidden transition-all duration-300 flex-1 relative"
+        className="relative flex h-full flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white/70 p-2 transition-all duration-300 dark:border-slate-700 dark:bg-slate-900/75"
         style={{ width: `${rightWidthPercent}%` }}
       >
         {/* Collapse/Expand and Width Toggle Button */}
         <div className="absolute top-4 left-4 z-20 flex gap-2">
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
+            className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900/75 dark:hover:bg-slate-800"
             title={
               sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")
             }
@@ -154,7 +154,7 @@ export default function GuidePage() {
           {!sidebarCollapsed && (
             <button
               onClick={() => setSidebarWide(!sidebarWide)}
-              className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
+              className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900/75 dark:hover:bg-slate-800"
               title={
                 sidebarWide
                   ? t("Switch to narrow sidebar (1:3)")
@@ -170,7 +170,7 @@ export default function GuidePage() {
 
         {/* Content based on state */}
         {sessionState.status === "idle" ? (
-          <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 p-8">
+          <div className="flex-1 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/88 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/82 flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 p-8">
             <GraduationCap className="w-24 h-24 text-slate-200 dark:text-slate-600 mb-6" />
             <h3 className="text-lg font-medium text-slate-600 dark:text-slate-300 mb-2">
               {t("Guided Learning")}
@@ -191,7 +191,7 @@ export default function GuidePage() {
             onOpenDebugModal={() => setShowDebugModal(true)}
           />
         ) : (
-          <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 p-8">
+          <div className="flex-1 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/88 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/82 flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 p-8">
             <Loader2 className="w-12 h-12 text-indigo-400 dark:text-indigo-500 animate-spin mb-4" />
             <p className="text-slate-500 dark:text-slate-400">
               {loadingMessage || t("Loading learning content...")}

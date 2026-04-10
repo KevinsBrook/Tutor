@@ -171,11 +171,11 @@ export default function SolverPage() {
   };
 
   return (
-    <div className="h-screen flex gap-0 animate-fade-in overflow-hidden">
+    <div className="h-[calc(100vh-7rem)] min-h-0 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/72 p-3 animate-fade-in shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/72 flex gap-4 overflow-hidden">
       {/* Left Panel: Chat Interface */}
-      <div className="flex-1 flex flex-col bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 overflow-hidden min-h-0">
+      <div className="flex-1 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-cyan-200/60 bg-cyan-50/45 shadow-[0_10px_30px_rgba(8,145,178,0.18)] dark:border-cyan-900/50 dark:bg-cyan-950/18">
         {/* Chat Header */}
-        <div className="p-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 flex justify-between items-center backdrop-blur-sm shrink-0">
+        <div className="p-4 border-b border-cyan-200/60 dark:border-cyan-900/50 bg-gradient-to-r from-cyan-100/80 via-white/70 to-blue-100/80 dark:from-cyan-950/45 dark:via-slate-900/70 dark:to-blue-950/45 flex justify-between items-center backdrop-blur-xl shrink-0">
           <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-semibold">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
             {t("Smart Solver")}
@@ -526,7 +526,7 @@ export default function SolverPage() {
         </div>
 
         {/* Input Area */}
-        <div className="p-4 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 shrink-0">
+        <div className="p-4 bg-white/70 dark:bg-slate-900/65 border-t border-white/70 dark:border-slate-700 shrink-0 backdrop-blur-xl">
           <div className="w-full relative">
             <input
               type="text"
@@ -560,9 +560,9 @@ export default function SolverPage() {
       </div>
 
       {/* Right Panel: Logic Stream - Modern Light Theme */}
-      <div className="w-[400px] flex-shrink-0 bg-white dark:bg-slate-800 flex flex-col overflow-hidden border-l border-slate-200 dark:border-slate-700 h-full">
+      <div className="w-[400px] flex-shrink-0 flex flex-col overflow-hidden rounded-2xl border border-indigo-200/60 bg-indigo-50/45 shadow-[0_10px_30px_rgba(79,70,229,0.18)] dark:border-indigo-900/50 dark:bg-indigo-950/20 h-full">
         {/* Header */}
-        <div className="px-4 py-3 bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between shrink-0">
+        <div className="px-4 py-3 bg-gradient-to-r from-indigo-100/75 via-violet-50/75 to-white/70 dark:from-indigo-950/40 dark:via-violet-950/35 dark:to-slate-900/70 border-b border-indigo-200/60 dark:border-indigo-900/50 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             <Activity className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
             {t("Logic Stream")}

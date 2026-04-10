@@ -16,10 +16,10 @@ interface ModalProps {
 }
 
 const widthClasses = {
-  sm: "w-[400px]",
-  md: "w-[500px]",
-  lg: "w-[600px]",
-  xl: "w-[800px]",
+  sm: "w-[440px]",
+  md: "w-[560px]",
+  lg: "w-[720px]",
+  xl: "w-[920px]",
 };
 
 /**
@@ -68,25 +68,27 @@ export default function Modal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-md animate-in fade-in"
       onClick={handleBackdropClick}
     >
       <div
-        className={`bg-white dark:bg-slate-800 rounded-2xl shadow-2xl ${widthClasses[width]} max-h-[90vh] flex flex-col animate-in zoom-in-95`}
+        className={`max-h-[90vh] ${widthClasses[width]} flex flex-col overflow-hidden rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/95 shadow-[0_24px_80px_rgba(2,6,23,0.28)] animate-in zoom-in-95 dark:border-slate-700/70 dark:bg-slate-900/90`}
       >
         {/* Header */}
         {(title || titleIcon) && (
-          <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between shrink-0">
-            <h3 className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+          <div className="shrink-0 border-b border-slate-200/60 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-900/70">
+            <div className="flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
               {titleIcon}
               {title}
-            </h3>
-            <button
-              onClick={onClose}
-              className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-            >
-              <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
-            </button>
+              </h3>
+              <button
+                onClick={onClose}
+                className="rounded-xl border border-slate-200/80 bg-white p-1.5 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+              >
+                <X className="h-5 w-5 text-slate-500 dark:text-slate-300" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -95,7 +97,7 @@ export default function Modal({
 
         {/* Footer */}
         {footer && (
-          <div className="p-4 border-t border-slate-100 dark:border-slate-700 shrink-0">
+          <div className="shrink-0 border-t border-slate-200/60 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-900/70">
             {footer}
           </div>
         )}

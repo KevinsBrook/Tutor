@@ -169,11 +169,11 @@ export default function QuestionPage() {
         questionState.paperPath.trim().length > 0;
 
   return (
-    <div className="h-screen flex gap-0 p-4 animate-fade-in overflow-hidden">
+    <div className="h-[calc(100vh-7rem)] flex gap-4 p-3 animate-fade-in overflow-hidden rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/72 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/72">
       {/* Main Panel */}
-      <div className="flex-1 flex flex-col bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div className="flex-1 flex flex-col rounded-2xl border border-fuchsia-200/60 bg-fuchsia-50/45 shadow-[0_10px_30px_rgba(217,70,239,0.16)] dark:border-fuchsia-900/50 dark:bg-fuchsia-950/18 overflow-hidden">
         {/* Header */}
-        <div className="p-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 flex justify-between items-center backdrop-blur-sm shrink-0">
+        <div className="p-4 border-b border-white/70 dark:border-slate-700 bg-white/70 dark:bg-slate-900/65 flex justify-between items-center backdrop-blur-xl shrink-0">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-semibold">
               <PenTool className="w-5 h-5 text-purple-600 dark:text-purple-400" />
@@ -292,240 +292,310 @@ export default function QuestionPage() {
           {/* Config Mode */}
           {isConfigMode && (
             <div className="p-6">
-              <div className="max-w-2xl mx-auto space-y-6">
-                {/* Mode Info Banner */}
-                <div
-                  className={`p-4 rounded-xl border ${
-                    questionState.mode === "knowledge"
-                      ? "bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-800"
-                      : "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    {questionState.mode === "knowledge" ? (
-                      <BrainCircuit className="w-6 h-6 text-purple-600 dark:text-purple-400" />
-                    ) : (
-                      <FileText className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-                    )}
-                    <div>
-                      <h3
-                        className={`font-semibold ${
+              <div className="mx-auto grid max-w-5xl gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+                <div className="space-y-6 rounded-2xl border border-white/70 bg-white/70 p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900/70">
+                  <div className="space-y-3">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      {t("Generation Mode")}
+                    </label>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <button
+                        onClick={() =>
+                          setQuestionState((prev) => ({
+                            ...prev,
+                            mode: "knowledge",
+                          }))
+                        }
+                        className={`rounded-xl border p-4 text-left transition-all ${
                           questionState.mode === "knowledge"
-                            ? "text-purple-800 dark:text-purple-300"
-                            : "text-blue-800 dark:text-blue-300"
+                            ? "border-purple-400 bg-purple-50 dark:border-purple-500 dark:bg-purple-900/30"
+                            : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800"
                         }`}
                       >
-                        {questionState.mode === "knowledge"
-                          ? t("Custom Mode")
-                          : t("Mimic Exam Paper Mode")}
-                      </h3>
-                      <p className="text-sm text-slate-600 dark:text-slate-400">
-                        {questionState.mode === "knowledge"
-                          ? t(
-                              "Generate questions based on knowledge base content",
-                            )
-                          : t(
-                              "Generate similar questions based on an exam paper",
-                            )}
-                      </p>
+                        <div className="mb-2 inline-flex rounded-lg bg-purple-100 p-2 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300">
+                          <BrainCircuit className="h-4 w-4" />
+                        </div>
+                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {t("Custom")}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          {t("Generate from selected knowledge base")}
+                        </p>
+                      </button>
+                      <button
+                        onClick={() =>
+                          setQuestionState((prev) => ({ ...prev, mode: "mimic" }))
+                        }
+                        className={`rounded-xl border p-4 text-left transition-all ${
+                          questionState.mode === "mimic"
+                            ? "border-blue-400 bg-blue-50 dark:border-blue-500 dark:bg-blue-900/30"
+                            : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800"
+                        }`}
+                      >
+                        <div className="mb-2 inline-flex rounded-lg bg-blue-100 p-2 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">
+                          <FileText className="h-4 w-4" />
+                        </div>
+                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {t("Mimic Exam")}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          {t("Generate based on a reference exam paper")}
+                        </p>
+                      </button>
                     </div>
                   </div>
-                </div>
 
-                {/* Knowledge Base Mode Config */}
-                {questionState.mode === "knowledge" && (
-                  <>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                        {t("Knowledge Point / Topic")}
-                      </label>
-                      <input
-                        type="text"
-                        value={questionState.topic}
-                        onChange={(e) =>
-                          setQuestionState((prev) => ({
-                            ...prev,
-                            topic: e.target.value,
-                          }))
-                        }
-                        placeholder={t("e.g. Gradient Descent Optimization")}
-                        className="w-full p-4 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/10 transition-all text-lg dark:text-slate-200 placeholder:text-slate-400"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-4">
+                  {/* Knowledge Base Mode Config */}
+                  {questionState.mode === "knowledge" && (
+                    <>
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                          {t("Count")}
+                          {t("Knowledge Point / Topic")}
                         </label>
                         <input
-                          type="number"
-                          min="1"
-                          max="50"
-                          value={questionState.count || ""}
-                          onChange={(e) => {
-                            const rawVal = e.target.value;
-                            // Allow empty input while typing
-                            if (rawVal === "") {
-                              setQuestionState((prev) => ({
-                                ...prev,
-                                count: 0,
-                              }));
-                              return;
-                            }
-                            const val = parseInt(rawVal);
-                            if (!isNaN(val)) {
-                              setQuestionState((prev) => ({
-                                ...prev,
-                                count: Math.min(50, Math.max(0, val)),
-                              }));
-                            }
-                          }}
-                          onBlur={(e) => {
-                            // Ensure valid value on blur
-                            const val = parseInt(e.target.value) || 1;
-                            setQuestionState((prev) => ({
-                              ...prev,
-                              count: Math.max(1, Math.min(50, val)),
-                            }));
-                          }}
-                          className="w-full p-3 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-center outline-none focus:border-purple-500 dark:text-slate-200"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                          {t("Difficulty")}
-                        </label>
-                        <select
-                          value={questionState.difficulty}
+                          type="text"
+                          value={questionState.topic}
                           onChange={(e) =>
                             setQuestionState((prev) => ({
                               ...prev,
-                              difficulty: e.target.value,
+                              topic: e.target.value,
                             }))
                           }
-                          className="w-full p-3 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:border-purple-500 dark:text-slate-200"
-                        >
-                          <option value="easy">{t("Easy")}</option>
-                          <option value="medium">{t("Medium")}</option>
-                          <option value="hard">{t("Hard")}</option>
-                        </select>
+                          placeholder={t("e.g. Gradient Descent Optimization")}
+                          className="w-full rounded-xl border border-slate-200 bg-white p-4 text-lg outline-none transition-all focus:border-purple-500 focus:ring-2 focus:ring-purple-500/10 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                        />
                       </div>
 
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                          <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                            {t("Count")}
+                          </label>
+                          <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-900">
+                            <button
+                              onClick={() =>
+                                setQuestionState((prev) => ({
+                                  ...prev,
+                                  count: Math.max(1, (prev.count || 1) - 1),
+                                }))
+                              }
+                              className="h-8 w-8 rounded-md bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                            >
+                              -
+                            </button>
+                            <span className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                              {Math.max(1, questionState.count || 1)}
+                            </span>
+                            <button
+                              onClick={() =>
+                                setQuestionState((prev) => ({
+                                  ...prev,
+                                  count: Math.min(50, (prev.count || 1) + 1),
+                                }))
+                              }
+                              className="h-8 w-8 rounded-md bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                          <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                            {t("Difficulty")}
+                          </label>
+                          <div className="mt-3 grid grid-cols-3 gap-1.5">
+                            {["easy", "medium", "hard"].map((level) => (
+                              <button
+                                key={level}
+                                onClick={() =>
+                                  setQuestionState((prev) => ({
+                                    ...prev,
+                                    difficulty: level,
+                                  }))
+                                }
+                                className={`rounded-lg px-2 py-1.5 text-xs font-medium transition-all ${
+                                  questionState.difficulty === level
+                                    ? "bg-purple-600 text-white"
+                                    : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                                }`}
+                              >
+                                {t(
+                                  level === "easy"
+                                    ? "Easy"
+                                    : level === "medium"
+                                      ? "Medium"
+                                      : "Hard",
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                          <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                            {t("Type")}
+                          </label>
+                          <div className="mt-3 grid grid-cols-1 gap-1.5">
+                            {[
+                              { id: "choice", label: t("Multiple Choice") },
+                              { id: "written", label: t("Written") },
+                            ].map((item) => (
+                              <button
+                                key={item.id}
+                                onClick={() =>
+                                  setQuestionState((prev) => ({
+                                    ...prev,
+                                    type: item.id,
+                                  }))
+                                }
+                                className={`rounded-lg px-2 py-1.5 text-xs font-medium transition-all ${
+                                  questionState.type === item.id
+                                    ? "bg-indigo-600 text-white"
+                                    : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                                }`}
+                              >
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Mimic Mode Config */}
+                  {questionState.mode === "mimic" && (
+                    <div className="space-y-5">
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                          {t("Type")}
+                          {t("Upload Exam Paper (PDF)")}
                         </label>
-                        <select
-                          value={questionState.type}
-                          onChange={(e) =>
-                            setQuestionState((prev) => ({
-                              ...prev,
-                              type: e.target.value,
-                            }))
-                          }
-                          className="w-full p-3 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:border-purple-500 dark:text-slate-200"
-                        >
-                          <option value="choice">{t("Multiple Choice")}</option>
-                          <option value="written">{t("Written")}</option>
-                        </select>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* Mimic Mode Config */}
-                {questionState.mode === "mimic" && (
-                  <div className="space-y-5">
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                        {t("Upload Exam Paper (PDF)")}
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="file"
-                          accept=".pdf"
-                          onChange={handleFileUpload}
-                          className="hidden"
-                          id="pdf-upload"
-                        />
-                        <label
-                          htmlFor="pdf-upload"
-                          className="flex items-center justify-center gap-3 w-full py-8 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50/50 dark:hover:bg-purple-900/20 transition-all"
-                        >
-                          {questionState.uploadedFile ? (
-                            <div className="flex items-center gap-3 text-purple-700 dark:text-purple-400">
-                              <FileText className="w-8 h-8" />
-                              <div>
+                        <div className="relative">
+                          <input
+                            type="file"
+                            accept=".pdf"
+                            onChange={handleFileUpload}
+                            className="hidden"
+                            id="pdf-upload"
+                          />
+                          <label
+                            htmlFor="pdf-upload"
+                            className="flex items-center justify-center gap-3 w-full py-10 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-2xl cursor-pointer hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50/50 dark:hover:bg-purple-900/20 transition-all"
+                          >
+                            {questionState.uploadedFile ? (
+                              <div className="flex items-center gap-3 text-purple-700 dark:text-purple-400">
+                                <FileText className="w-8 h-8" />
+                                <div>
+                                  <p className="font-medium">
+                                    {questionState.uploadedFile.name}
+                                  </p>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                                    {(
+                                      questionState.uploadedFile.size /
+                                      1024 /
+                                      1024
+                                    ).toFixed(2)}{" "}
+                                    MB
+                                  </p>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-center text-slate-500 dark:text-slate-400">
+                                <Upload className="w-8 h-8 mx-auto mb-2 text-slate-400" />
                                 <p className="font-medium">
-                                  {questionState.uploadedFile.name}
+                                  {t("Click to upload PDF")}
                                 </p>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">
-                                  {(
-                                    questionState.uploadedFile.size /
-                                    1024 /
-                                    1024
-                                  ).toFixed(2)}{" "}
-                                  MB
+                                <p className="text-xs">
+                                  {t("The system will parse and generate questions")}
                                 </p>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="text-center text-slate-500 dark:text-slate-400">
-                              <Upload className="w-8 h-8 mx-auto mb-2 text-slate-400" />
-                              <p className="font-medium">
-                                {t("Click to upload PDF")}
-                              </p>
-                              <p className="text-xs">
-                                {t(
-                                  "The system will parse and generate questions",
-                                )}
-                              </p>
-                            </div>
-                          )}
+                            )}
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 h-px bg-slate-200 dark:bg-slate-600"></div>
+                        <span className="text-xs text-slate-400 dark:text-slate-500">
+                          {t("OR")}
+                        </span>
+                        <div className="flex-1 h-px bg-slate-200 dark:bg-slate-600"></div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                          {t("Pre-parsed Directory")}
                         </label>
+                        <input
+                          type="text"
+                          value={questionState.paperPath}
+                          onChange={(e) =>
+                            setQuestionState((prev) => ({
+                              ...prev,
+                              paperPath: e.target.value,
+                              uploadedFile: null,
+                            }))
+                          }
+                          placeholder={t("e.g. 2211asm1")}
+                          className="w-full p-3 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:border-purple-500 dark:text-slate-200 placeholder:text-slate-400"
+                        />
                       </div>
                     </div>
+                  )}
+                </div>
 
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-px bg-slate-200 dark:bg-slate-600"></div>
-                      <span className="text-xs text-slate-400 dark:text-slate-500">
-                        {t("OR")}
-                      </span>
-                      <div className="flex-1 h-px bg-slate-200 dark:bg-slate-600"></div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                        {t("Pre-parsed Directory")}
-                      </label>
-                      <input
-                        type="text"
-                        value={questionState.paperPath}
-                        onChange={(e) =>
-                          setQuestionState((prev) => ({
-                            ...prev,
-                            paperPath: e.target.value,
-                            uploadedFile: null,
-                          }))
-                        }
-                        placeholder={t("e.g. 2211asm1")}
-                        className="w-full p-3 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:border-purple-500 dark:text-slate-200 placeholder:text-slate-400"
-                      />
-                    </div>
+                <div className="rounded-2xl border border-white/70 bg-white/70 p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900/70">
+                  <div className="mb-4 flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                    <Sparkles className="h-4 w-4 text-purple-500" />
+                    <h3 className="text-sm font-semibold">{t("Generation Summary")}</h3>
                   </div>
-                )}
+                  <div className="space-y-3 text-sm">
+                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800">
+                      <span className="text-slate-500 dark:text-slate-400">{t("Mode")}</span>
+                      <span className="font-medium text-slate-900 dark:text-slate-100">
+                        {questionState.mode === "knowledge" ? t("Custom") : t("Mimic Exam")}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800">
+                      <span className="text-slate-500 dark:text-slate-400">{t("KB")}</span>
+                      <span className="font-medium text-slate-900 dark:text-slate-100 truncate max-w-[180px]">
+                        {questionState.selectedKb || "-"}
+                      </span>
+                    </div>
+                    {questionState.mode === "knowledge" && (
+                      <>
+                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800">
+                          <span className="text-slate-500 dark:text-slate-400">{t("Count")}</span>
+                          <span className="font-medium text-slate-900 dark:text-slate-100">
+                            {Math.max(1, questionState.count || 1)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800">
+                          <span className="text-slate-500 dark:text-slate-400">{t("Difficulty")}</span>
+                          <span className="font-medium text-slate-900 dark:text-slate-100">
+                            {questionState.difficulty}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800">
+                          <span className="text-slate-500 dark:text-slate-400">{t("Type")}</span>
+                          <span className="font-medium text-slate-900 dark:text-slate-100">
+                            {questionState.type === "choice" ? t("Multiple Choice") : t("Written")}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    onClick={handleStart}
+                    disabled={!canStart || isGenerating}
+                    className="mt-5 w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-purple-500/30 hover:from-purple-700 hover:to-indigo-700 hover:shadow-purple-500/50 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Sparkles className="w-5 h-5" />
+                    {t("Generate Questions")}
+                  </button>
+                </div>
 
-                {/* Generate Button */}
-                <button
-                  onClick={handleStart}
-                  disabled={!canStart || isGenerating}
-                  className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-purple-500/30 hover:from-purple-700 hover:to-indigo-700 hover:shadow-purple-500/50 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <Sparkles className="w-5 h-5" />
-                  {t("Generate Questions")}
-                </button>
               </div>
             </div>
           )}
@@ -534,8 +604,8 @@ export default function QuestionPage() {
           {!isConfigMode && (
             <div className="flex h-full">
               {/* Left: Question List */}
-              <div className="w-72 flex-shrink-0 border-r border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 flex flex-col">
-                <div className="p-3 border-b border-slate-100 dark:border-slate-700">
+              <div className="w-80 flex-shrink-0 border-r border-fuchsia-100 dark:border-fuchsia-900/40 bg-white/80 dark:bg-slate-900/65 flex flex-col">
+                <div className="p-3 border-b border-fuchsia-100 dark:border-fuchsia-900/40">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                       {t("Questions")}
@@ -555,7 +625,7 @@ export default function QuestionPage() {
                     </div>
                   )}
                 </div>
-                <div className="flex-1 overflow-y-auto p-2">
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
                   {totalQuestions === 0 && isGenerating && (
                     <div className="flex flex-col items-center justify-center h-full text-slate-400">
                       <Loader2 className="w-8 h-8 animate-spin mb-2" />
@@ -566,10 +636,10 @@ export default function QuestionPage() {
                     <button
                       key={idx}
                       onClick={() => setActiveIdx(idx)}
-                      className={`w-full text-left px-3 py-2.5 rounded-lg transition-all mb-1 ${
+                      className={`w-full text-left px-3 py-3 rounded-xl transition-all border ${
                         activeIdx === idx
-                          ? "bg-purple-50 dark:bg-purple-900/30 border-l-2 border-purple-500"
-                          : "hover:bg-slate-50 dark:hover:bg-slate-700"
+                          ? "bg-fuchsia-50 dark:bg-fuchsia-900/25 border-fuchsia-300 dark:border-fuchsia-700"
+                          : "bg-white/85 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 hover:border-fuchsia-300 dark:hover:border-fuchsia-700"
                       }`}
                     >
                       <div className="flex items-start gap-3">
@@ -579,8 +649,8 @@ export default function QuestionPage() {
                               ? "bg-amber-100 dark:bg-amber-900/40 text-amber-600"
                               : submittedMap[idx]
                                 ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600"
-                                : activeIdx === idx
-                                  ? "bg-purple-100 dark:bg-purple-900/40 text-purple-600"
+                                  : activeIdx === idx
+                                  ? "bg-fuchsia-100 dark:bg-fuchsia-900/40 text-fuchsia-600"
                                   : "bg-slate-100 dark:bg-slate-700 text-slate-500"
                           }`}
                         >
@@ -617,13 +687,13 @@ export default function QuestionPage() {
               </div>
 
               {/* Right: Question Detail */}
-              <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden bg-white/70 dark:bg-slate-900/45">
                 {currentQuestion ? (
                   <>
                     {/* Question Header */}
-                    <div className="px-6 py-3 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between bg-white dark:bg-slate-800">
+                    <div className="px-6 py-3 border-b border-fuchsia-100 dark:border-fuchsia-900/40 flex items-center justify-between bg-gradient-to-r from-fuchsia-100/65 via-white to-indigo-100/50 dark:from-fuchsia-950/35 dark:via-slate-900 dark:to-indigo-950/30">
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-medium text-slate-500">
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
                           Question {activeIdx + 1}
                         </span>
                         <span className="px-2 py-0.5 text-xs font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-700 text-slate-500 rounded">
@@ -666,7 +736,7 @@ export default function QuestionPage() {
                       currentQuestion.question.options &&
                       Object.keys(currentQuestion.question.options).length >
                         0 ? (
-                        <div className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-2">
                           {Object.entries(currentQuestion.question.options).map(
                             ([key, val]) => {
                               const isSelected = userAnswers[activeIdx] === key;

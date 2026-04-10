@@ -243,9 +243,9 @@ export default function HistoryPage() {
   const groupedEntries = groupEntriesByDate(filteredEntries);
 
   return (
-    <div className="h-screen flex flex-col animate-fade-in p-6">
+    <div className="h-[calc(100vh-7rem)] flex flex-col animate-fade-in p-3 md:p-4 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/72 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/72">
       {/* Header - Fixed */}
-      <div className="shrink-0 pb-4">
+      <div className="shrink-0 pb-4 rounded-2xl border border-slate-200/70 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-900/70">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-3">
@@ -309,9 +309,9 @@ export default function HistoryPage() {
       </div>
 
       {/* Scrollable Content Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
         {/* Regular Activity History */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div className="rounded-2xl border border-blue-200/60 bg-blue-50/45 shadow-[0_10px_30px_rgba(59,130,246,0.16)] dark:border-blue-900/50 dark:bg-blue-950/18 overflow-hidden">
           {loading ? (
             <div className="p-12 text-center text-slate-400 dark:text-slate-500">
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
@@ -408,7 +408,7 @@ export default function HistoryPage() {
         {/* Chat Sessions Section */}
         {chatSessions.length > 0 &&
           (filterType === "all" || filterType === "chat") && (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="rounded-2xl border border-amber-200/60 bg-amber-50/45 shadow-[0_10px_30px_rgba(245,158,11,0.16)] dark:border-amber-900/50 dark:bg-amber-950/18 overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2">
                 <MessageSquare className="w-5 h-5 text-amber-500" />
                 <h2 className="font-semibold text-slate-900 dark:text-slate-100">
@@ -505,7 +505,7 @@ export default function HistoryPage() {
         {/* Solver Sessions Section */}
         {solverSessions.length > 0 &&
           (filterType === "all" || filterType === "solve") && (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="rounded-2xl border border-cyan-200/60 bg-cyan-50/45 shadow-[0_10px_30px_rgba(6,182,212,0.16)] dark:border-cyan-900/50 dark:bg-cyan-950/18 overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2">
                 <Calculator className="w-5 h-5 text-blue-500" />
                 <h2 className="font-semibold text-slate-900 dark:text-slate-100">

@@ -4,6 +4,12 @@
 
 @layer base {
   :root {
+    --ui-accent-1: #0f766e;
+    --ui-accent-2: #0369a1;
+    --ui-accent-soft: rgba(14, 165, 233, 0.12);
+    --ui-bg-start: #f7fafc;
+    --ui-bg-end: #ecf5ff;
+    --ui-panel: #f8fbff;
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
 
@@ -36,6 +42,12 @@
   }
 
   .dark {
+    --ui-accent-1: #5eead4;
+    --ui-accent-2: #7dd3fc;
+    --ui-accent-soft: rgba(56, 189, 248, 0.16);
+    --ui-bg-start: #0b1220;
+    --ui-bg-end: #111c2b;
+    --ui-panel: #0f172a;
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
 
@@ -72,10 +84,51 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-body), "Noto Sans SC", "PingFang SC",
+      "Microsoft YaHei", sans-serif;
     font-feature-settings:
       "rlig" 1,
       "calt" 1;
+    background:
+      radial-gradient(
+        circle at 2% 4%,
+        rgba(14, 165, 233, 0.12) 0%,
+        transparent 28%
+      ),
+      radial-gradient(
+        circle at 96% 2%,
+        rgba(20, 184, 166, 0.14) 0%,
+        transparent 30%
+      ),
+      linear-gradient(var(--ui-bg-start), var(--ui-bg-end));
+    min-height: 100vh;
   }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading), "Space Grotesk", "Noto Sans SC",
+      sans-serif;
+    letter-spacing: -0.01em;
+  }
+}
+
+.ui-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: linear-gradient(
+      rgba(148, 163, 184, 0.06) 1px,
+      transparent 1px
+    ),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, black 35%, transparent 95%);
 }
 
 /* Markdown Styles */

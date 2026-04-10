@@ -465,12 +465,12 @@ export default function NotebookPage() {
 
   return (
     <div
-      className="h-screen flex gap-4 p-4 animate-fade-in"
+      className="h-[calc(100vh-7rem)] min-h-0 flex gap-4 p-3 animate-fade-in rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/72 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur"
       style={{ justifyContent: "flex-start" }}
     >
       {/* Left Panel: Notebook List */}
       <div
-        className={`flex flex-col bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-all duration-300 flex-shrink-0 ${leftCollapsed ? "overflow-hidden" : ""}`}
+        className={`flex flex-col rounded-2xl border border-rose-200/60 bg-rose-50/45 shadow-[0_10px_30px_rgba(244,63,94,0.16)] dark:border-rose-900/50 dark:bg-rose-950/18 overflow-hidden transition-all duration-300 flex-shrink-0 ${leftCollapsed ? "overflow-hidden" : ""}`}
         style={{
           width: leftCollapsed ? 0 : "288px",
           minWidth: leftCollapsed ? 0 : "288px",
@@ -620,7 +620,7 @@ export default function NotebookPage() {
 
       {/* Middle Panel: Records List */}
       <div
-        className={`flex flex-col bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-all duration-300 flex-shrink-0 ${middleCollapsed ? "overflow-hidden" : ""}`}
+        className={`flex flex-col rounded-2xl border border-violet-200/60 bg-violet-50/45 shadow-[0_10px_30px_rgba(139,92,246,0.16)] dark:border-violet-900/50 dark:bg-violet-950/18 overflow-hidden transition-all duration-300 flex-shrink-0 ${middleCollapsed ? "overflow-hidden" : ""}`}
         style={{
           width: middleCollapsed ? 0 : "320px",
           minWidth: middleCollapsed ? 0 : "320px",
@@ -774,7 +774,7 @@ export default function NotebookPage() {
 
       {/* Right Panel: Record Detail */}
       <div
-        className={`flex flex-col bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-all duration-300 ${rightCollapsed ? "flex-shrink-0 overflow-hidden" : "flex-1"}`}
+        className={`flex flex-col rounded-2xl border border-cyan-200/60 bg-cyan-50/45 shadow-[0_10px_30px_rgba(6,182,212,0.16)] dark:border-cyan-900/50 dark:bg-cyan-950/18 overflow-hidden transition-all duration-300 ${rightCollapsed ? "flex-shrink-0 overflow-hidden" : "flex-1"}`}
         style={{
           width: rightCollapsed ? 0 : undefined,
           minWidth: rightCollapsed ? 0 : undefined,
@@ -926,8 +926,8 @@ export default function NotebookPage() {
 
       {/* Create Notebook Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-[400px] animate-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-950/35 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in">
+          <div className="w-[720px] max-w-[92vw] rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/96 shadow-2xl dark:border-slate-700 dark:bg-slate-900/92 animate-in zoom-in-95">
             <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
               <h3 className="font-bold text-slate-900 dark:text-slate-100">
                 {t("Create New Notebook")}
@@ -939,7 +939,8 @@ export default function NotebookPage() {
                 <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
               </button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="grid gap-5 p-6 md:grid-cols-[1fr_0.7fr]">
+              <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
                   {t("Name")}
@@ -995,6 +996,24 @@ export default function NotebookPage() {
                   ))}
                 </div>
               </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  {t("Preview")}
+                </p>
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                  <div
+                    className="mb-2 h-2 w-10 rounded-full"
+                    style={{ backgroundColor: newNotebook.color }}
+                  />
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    {newNotebook.name || t("My Notebook")}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 line-clamp-4">
+                    {newNotebook.description || t("Description (Optional)")}
+                  </p>
+                </div>
+              </div>
             </div>
             <div className="p-4 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">
               <button
@@ -1018,8 +1037,8 @@ export default function NotebookPage() {
 
       {/* Edit Notebook Modal */}
       {showEditModal && editingNotebook && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-[400px] animate-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-950/35 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in">
+          <div className="w-[720px] max-w-[92vw] rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/96 shadow-2xl dark:border-slate-700 dark:bg-slate-900/92 animate-in zoom-in-95">
             <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
               <h3 className="font-bold text-slate-900 dark:text-slate-100">
                 {t("Edit Notebook")}
@@ -1034,7 +1053,8 @@ export default function NotebookPage() {
                 <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
               </button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="grid gap-5 p-6 md:grid-cols-[1fr_0.7fr]">
+              <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
                   {t("Name")}
@@ -1088,6 +1108,24 @@ export default function NotebookPage() {
                   ))}
                 </div>
               </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  {t("Preview")}
+                </p>
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                  <div
+                    className="mb-2 h-2 w-10 rounded-full"
+                    style={{ backgroundColor: editingNotebook.color }}
+                  />
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    {editingNotebook.name || t("Edit Notebook")}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 line-clamp-4">
+                    {editingNotebook.description || t("Description")}
+                  </p>
+                </div>
+              </div>
             </div>
             <div className="p-4 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">
               <button
@@ -1114,8 +1152,8 @@ export default function NotebookPage() {
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-[360px] animate-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-950/35 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in">
+          <div className="w-[400px] max-w-[92vw] rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/96 shadow-2xl dark:border-slate-700 dark:bg-slate-900/92 animate-in zoom-in-95">
             <div className="p-6 text-center">
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/40 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Trash2 className="w-6 h-6 text-red-600 dark:text-red-400" />
@@ -1129,7 +1167,7 @@ export default function NotebookPage() {
                 )}
               </p>
             </div>
-            <div className="p-4 border-t border-slate-100 dark:border-slate-700 flex justify-center gap-2">
+            <div className="p-4 border-t border-slate-100 dark:border-slate-700 flex justify-center gap-2 bg-slate-50/60 dark:bg-slate-900/40">
               <button
                 onClick={() => setShowDeleteConfirm(null)}
                 className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
@@ -1150,8 +1188,8 @@ export default function NotebookPage() {
 
       {/* Import Records Modal */}
       {showImportModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-[500px] max-h-[80vh] flex flex-col animate-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-950/35 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in">
+          <div className="w-[860px] max-w-[94vw] max-h-[84vh] rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/96 shadow-2xl dark:border-slate-700 dark:bg-slate-900/92 flex flex-col animate-in zoom-in-95">
             <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between shrink-0">
               <h3 className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 <Upload className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
@@ -1170,9 +1208,10 @@ export default function NotebookPage() {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="grid gap-4 md:grid-cols-[0.9fr_1.1fr]">
               {/* Source Notebook Selection */}
-              <div>
+              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-800/60">
                 <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
                   {t("Source Notebook")}
                 </label>
@@ -1192,7 +1231,7 @@ export default function NotebookPage() {
 
               {/* Records Selection */}
               {importSourceNotebook && (
-                <div>
+                <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-800/60">
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                       Select Records ({selectedImportRecords.size} selected)
@@ -1271,6 +1310,7 @@ export default function NotebookPage() {
                   )}
                 </div>
               )}
+              </div>
             </div>
 
             <div className="p-4 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2 shrink-0">
