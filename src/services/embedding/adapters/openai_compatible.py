@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """OpenAI-compatible embedding adapter for OpenAI, Azure, HuggingFace, LM Studio, etc."""
 
+import asyncio
 import logging
+import os
 from typing import Any, Dict
 
 import httpx
@@ -17,6 +19,7 @@ class OpenAICompatibleEmbeddingAdapter(BaseEmbeddingAdapter):
         "text-embedding-3-small": {"default": 1536, "dimensions": [512, 1536]},
         "text-embedding-ada-002": 1536,
     }
+    RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         headers = {
@@ -45,14 +48,39 @@ class OpenAICompatibleEmbeddingAdapter(BaseEmbeddingAdapter):
 
         logger.debug(f"Sending embedding request to {url} with {len(request.texts)} texts")
 
-        async with httpx.AsyncClient(timeout=self.request_timeout) as client:
-            response = await client.post(url, json=payload, headers=headers)
+        max_retries = int(os.getenv("EMBEDDING_MAX_RETRIES", "5"))
+        retry_base_seconds = float(os.getenv("EMBEDDING_RETRY_BASE_SECONDS", "1.5"))
 
-            if response.status_code >= 400:
+        async with httpx.AsyncClient(timeout=self.request_timeout) as client:
+            data = None
+            for attempt in range(max_retries + 1):
+                response = await client.post(url, json=payload, headers=headers)
+
+                if response.status_code < 400:
+                    data = response.json()
+                    break
+
                 logger.error(f"HTTP {response.status_code} response body: {response.text}")
 
-            response.raise_for_status()
-            data = response.json()
+                should_retry = (
+                    response.status_code in self.RETRYABLE_STATUS_CODES and attempt < max_retries
+                )
+                if not should_retry:
+                    response.raise_for_status()
+
+                wait_seconds = retry_base_seconds * (2**attempt)
+                logger.warning(
+                    "Embedding request failed with retryable status %s (attempt %s/%s). "
+                    "Retrying in %.1fs",
+                    response.status_code,
+                    attempt + 1,
+                    max_retries + 1,
+                    wait_seconds,
+                )
+                await asyncio.sleep(wait_seconds)
+
+            if data is None:
+                raise RuntimeError("Embedding request failed after retries")
 
         embeddings = [item["embedding"] for item in data["data"]]
 

@@ -7,11 +7,14 @@ Handles knowledge base CRUD operations, file uploads, and initialization.
 
 import asyncio
 from datetime import datetime
+import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import traceback
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -61,6 +64,335 @@ def format_bytes_human_readable(size_bytes: int) -> str:
         return f"{size_bytes / BYTES_PER_MB:.1f} MB"
     else:
         return f"{size_bytes} bytes"
+
+
+def _safe_read_json(file_path: Path) -> dict[str, Any] | list[Any]:
+    """Read JSON file safely and return parsed object."""
+    with open(file_path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, (dict, list)):
+        raise ValueError(f"Invalid JSON structure in {file_path.name}: expected dict or list")
+    return data
+
+
+def _pick_first_str(source: dict[str, Any], keys: list[str]) -> str | None:
+    """Pick first non-empty string value from dict by key priority."""
+    for key in keys:
+        value = source.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _parse_relation_endpoints_from_key(key: str) -> tuple[str | None, str | None]:
+    """Best-effort parse relation endpoints from relation key."""
+    text = key.strip()
+    if not text:
+        return None, None
+
+    # Pattern 1: "A -> B"
+    if "->" in text:
+        left, right = text.split("->", 1)
+        left = left.strip(" ()[]{}\"'")
+        right = right.strip(" ()[]{}\"'")
+        return (left or None, right or None)
+
+    # Pattern 2: "(A, B)"
+    tuple_match = re.match(r"^\(?\s*(.+?)\s*,\s*(.+?)\s*\)?$", text)
+    if tuple_match:
+        left = tuple_match.group(1).strip(" ()[]{}\"'")
+        right = tuple_match.group(2).strip(" ()[]{}\"'")
+        return (left or None, right or None)
+
+    # Pattern 3: "A|B" / "A::B"
+    for sep in ["|", "::", "\t"]:
+        if sep in text:
+            left, right = text.split(sep, 1)
+            left = left.strip(" ()[]{}\"'")
+            right = right.strip(" ()[]{}\"'")
+            return (left or None, right or None)
+
+    return None, None
+
+
+def _infer_node_type(label: str) -> str:
+    """Infer coarse node type from label text for coloring and filtering."""
+    text = label.strip()
+    if not text:
+        return "entity"
+    lower = text.lower()
+
+    if re.search(r"(figure|fig\.?|图\d+|chapter|章节|第\d+章|ch\d+|eq\.?|equation|公式)", lower):
+        return "meta"
+    if re.search(r"(dataset|数据集|mnist|cifar|imagenet|语料|corpus)", lower):
+        return "dataset"
+    if re.search(
+        r"(function|函数|layer|网络|network|loss|optimizer|梯度|激活|卷积|softmax|relu|sigmoid|norm)",
+        lower,
+    ):
+        return "concept"
+    if re.search(
+        r"(university|conference|ieee|inc\.|co\.|media|press|出版社|大学|研究所|实验室|arxiv)",
+        lower,
+    ):
+        return "organization"
+    if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b", text):
+        return "person"
+    if re.fullmatch(r"[a-zA-Z]{1,2}\d{0,2}", text):
+        return "symbol"
+    return "entity"
+
+
+def _is_probably_noisy_label(label: str) -> bool:
+    """Heuristic filter for low-value nodes frequently produced by OCR/LLM extraction."""
+    text = label.strip()
+    if not text:
+        return True
+    if text.lower().startswith("doc-"):
+        return True
+    if len(text) <= 1:
+        return True
+    if re.fullmatch(r"[\W_]+", text):
+        return True
+    if re.search(r"[�]", text):
+        return True
+    if "?" in text and re.search(r"[\u4e00-\u9fff]", text):
+        return True
+    if "/" in text and "." in text:
+        return True
+    if re.fullmatch(r"[a-zA-Z]{1,2}\d{1,2}", text):
+        return True
+    if re.fullmatch(r"[-+*/=<>~^%|&:.;,()\[\]{}\d\s]+", text):
+        return True
+    return False
+
+
+def _build_graph_payload(
+    entities_raw: dict[str, Any] | list[Any],
+    relations_raw: dict[str, Any] | list[Any],
+    max_nodes: int,
+    max_edges: int,
+    min_degree: int = 1,
+    filter_noise: bool = False,
+) -> dict[str, Any]:
+    """Convert raw entity/relation stores to frontend-friendly graph payload."""
+    node_map: dict[str, dict[str, Any]] = {}
+    edge_list: list[dict[str, Any]] = []
+    edge_seen: set[tuple[str, str, str]] = set()
+
+    def upsert_node(node_id: str, label: str | None = None, node_type: str | None = None):
+        nid = node_id.strip()
+        if not nid:
+            return
+        node_label = (label or nid).strip()
+        if filter_noise and _is_probably_noisy_label(node_label):
+            return
+        inferred_type = node_type or _infer_node_type(node_label)
+        if nid not in node_map:
+            node_map[nid] = {
+                "id": nid,
+                "label": node_label,
+                "type": inferred_type,
+            }
+        else:
+            if node_label and node_map[nid].get("label") == nid:
+                node_map[nid]["label"] = node_label
+            if inferred_type and node_map[nid].get("type") == "entity":
+                node_map[nid]["type"] = inferred_type
+
+    def append_edge(source: str, target: str, relation_label: str, weight: float = 1.0):
+        src = source.strip()
+        tgt = target.strip()
+        if not src or not tgt:
+            return
+        dedupe_key = (src, tgt, relation_label)
+        if dedupe_key in edge_seen:
+            return
+        edge_seen.add(dedupe_key)
+
+        upsert_node(src)
+        upsert_node(tgt)
+        if src not in node_map or tgt not in node_map:
+            return
+        edge_list.append(
+            {
+                "id": f"e_{len(edge_list)}",
+                "source": src,
+                "target": tgt,
+                "label": relation_label,
+                "weight": weight,
+            }
+        )
+
+    # Parse entities (supports both flat entity stores and LightRAG's doc->entity_names format)
+    if isinstance(entities_raw, dict):
+        entity_items = entities_raw.items()
+    else:
+        entity_items = [(str(i), item) for i, item in enumerate(entities_raw)]
+
+    for key, value in entity_items:
+        if isinstance(value, dict):
+            entity_names = value.get("entity_names")
+            if isinstance(entity_names, list):
+                for name in entity_names:
+                    if isinstance(name, str) and name.strip():
+                        upsert_node(name, label=name, node_type="entity")
+                continue
+
+        payload = value if isinstance(value, dict) else {}
+        entity_id = _pick_first_str(payload, ["id", "entity_id", "entity_name", "name", "entity"])
+
+        # For LightRAG doc-level wrapper keys like "doc-xxxx", don't treat as entity node
+        if not entity_id:
+            key_text = key.strip()
+            if key_text and not key_text.startswith("doc-"):
+                entity_id = key_text
+
+        if not entity_id:
+            continue
+
+        label = _pick_first_str(payload, ["label", "entity_name", "name", "entity"])
+        node_type = _pick_first_str(payload, ["entity_type", "type", "category"])
+        description = _pick_first_str(payload, ["description", "summary", "content"])
+        upsert_node(entity_id, label=label, node_type=node_type)
+        if description:
+            node_map[entity_id]["description"] = description
+
+    # Parse relations (supports both flat relation stores and LightRAG's doc->relation_pairs format)
+    if isinstance(relations_raw, dict):
+        relation_items = relations_raw.items()
+    else:
+        relation_items = [(str(i), item) for i, item in enumerate(relations_raw)]
+
+    for key, value in relation_items:
+        if isinstance(value, dict):
+            relation_pairs = value.get("relation_pairs")
+            if isinstance(relation_pairs, list):
+                for pair in relation_pairs:
+                    if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+                        source = str(pair[0]).strip()
+                        target = str(pair[1]).strip()
+                        if source and target:
+                            append_edge(source, target, "related_to", 1.0)
+                continue
+
+        payload = value if isinstance(value, dict) else {}
+        source = _pick_first_str(
+            payload,
+            ["source", "source_id", "src_id", "from", "head", "subject", "src"],
+        )
+        target = _pick_first_str(
+            payload,
+            ["target", "target_id", "tgt_id", "to", "tail", "object", "dst"],
+        )
+        if not source or not target:
+            parsed_source, parsed_target = _parse_relation_endpoints_from_key(str(key))
+            source = source or parsed_source
+            target = target or parsed_target
+        if not source or not target:
+            continue
+
+        relation_label = _pick_first_str(
+            payload,
+            ["relation", "relation_type", "predicate", "label", "keyword"],
+        ) or "related_to"
+        weight_raw = payload.get("weight", payload.get("score", 1.0))
+        try:
+            weight = float(weight_raw)
+        except (TypeError, ValueError):
+            weight = 1.0
+        append_edge(source, target, relation_label, weight)
+
+    # Compute degree for filtering/ranking.
+    degree_map: dict[str, int] = {nid: 0 for nid in node_map}
+    for edge in edge_list:
+        source = edge["source"]
+        target = edge["target"]
+        if source in degree_map:
+            degree_map[source] += 1
+        if target in degree_map:
+            degree_map[target] += 1
+
+    effective_min_degree = max(0, min_degree)
+    candidate_node_ids = [
+        nid for nid in node_map if degree_map.get(nid, 0) >= effective_min_degree
+    ]
+    if not candidate_node_ids and effective_min_degree > 0:
+        candidate_node_ids = [nid for nid in node_map if degree_map.get(nid, 0) > 0]
+    if not candidate_node_ids:
+        candidate_node_ids = list(node_map.keys())
+
+    connected_ids = [nid for nid in candidate_node_ids if degree_map.get(nid, 0) > 0]
+    connected_ids.sort(key=lambda nid: (-degree_map.get(nid, 0), node_map[nid]["label"]))
+    isolated_ids = [nid for nid in candidate_node_ids if degree_map.get(nid, 0) == 0]
+    isolated_ids.sort(key=lambda nid: node_map[nid]["label"])
+    ordered_node_ids = connected_ids + isolated_ids
+
+    limited_node_ids = ordered_node_ids[:max_nodes]
+    limited_nodes = []
+    for nid in limited_node_ids:
+        node = node_map[nid]
+        degree = degree_map.get(nid, 0)
+        node["degree"] = degree
+        node["size"] = min(56, 18 + degree * 1.6)
+        limited_nodes.append(node)
+
+    allowed_node_ids = {node["id"] for node in limited_nodes}
+    limited_edges = [
+        edge
+        for edge in edge_list
+        if edge["source"] in allowed_node_ids and edge["target"] in allowed_node_ids
+    ][:max_edges]
+
+    return {
+        "nodes": limited_nodes,
+        "edges": limited_edges,
+        "stats": {
+            "raw_nodes": len(node_map),
+            "raw_edges": len(edge_list),
+            "filtered_nodes": len(candidate_node_ids),
+            "returned_nodes": len(limited_nodes),
+            "returned_edges": len(limited_edges),
+            "truncated": len(node_map) > len(limited_nodes) or len(edge_list) > len(limited_edges),
+        },
+    }
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for compact display."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _truncate_text(text: str, max_len: int = 420) -> str:
+    """Truncate text safely for UI payloads."""
+    normalized = _normalize_text(text)
+    if len(normalized) <= max_len:
+        return normalized
+    return normalized[: max_len - 3].rstrip() + "..."
+
+
+def _looks_english_text(text: str) -> bool:
+    """Heuristic: determine if text is predominantly English."""
+    if not text:
+        return False
+    letters = re.findall(r"[A-Za-z]", text)
+    cjk = re.findall(r"[\u4e00-\u9fff]", text)
+    # Mostly Latin letters and very little Chinese characters
+    return len(letters) >= 30 and len(cjk) * 2 < len(letters)
+
+
+def _get_dict_value_case_insensitive(data: dict[str, Any], key: str) -> Any | None:
+    """Get dict value by case-insensitive key matching."""
+    if key in data:
+        return data[key]
+    lower_key = key.lower()
+    for k, v in data.items():
+        if isinstance(k, str) and k.lower() == lower_key:
+            return v
+    return None
 
 
 _kb_base_dir = _project_root / "data" / "knowledge_bases"
@@ -113,7 +445,19 @@ async def run_initialization_task(initializer: KnowledgeBaseInitializer):
 
         logger.info(f"[{task_id}] Initializing KB: {initializer.kb_name}")
 
-        await initializer.process_documents()
+        init_success = await initializer.process_documents()
+        if not init_success:
+            error_msg = "Knowledge base initialization failed during document processing"
+            logger.error(f"[{task_id}] KB '{initializer.kb_name}' init failed: {error_msg}")
+            task_manager.update_task_status(task_id, "error", error=error_msg)
+            if initializer.progress_tracker:
+                initializer.progress_tracker.update(
+                    ProgressStage.ERROR,
+                    "Initialization failed during document processing",
+                    error=error_msg,
+                )
+            return
+
         initializer.extract_numbered_items()
 
         initializer.progress_tracker.update(
@@ -437,6 +781,356 @@ async def get_knowledge_base_details(kb_name: str):
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{kb_name}/graph")
+async def get_knowledge_graph_data(
+    kb_name: str,
+    max_nodes: int = 300,
+    max_edges: int = 800,
+    min_degree: int = 1,
+    filter_noise: bool = True,
+):
+    """Get knowledge graph data (nodes and edges) for visualization."""
+    if max_nodes < 10 or max_nodes > 5000:
+        raise HTTPException(status_code=400, detail="max_nodes must be between 10 and 5000")
+    if max_edges < 10 or max_edges > 20000:
+        raise HTTPException(status_code=400, detail="max_edges must be between 10 and 20000")
+    if min_degree < 0 or min_degree > 20:
+        raise HTTPException(status_code=400, detail="min_degree must be between 0 and 20")
+
+    try:
+        manager = get_kb_manager()
+        kb_info = manager.get_info(kb_name)
+        rag_provider = kb_info.get("statistics", {}).get("rag_provider")
+
+        if rag_provider == "llamaindex":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Knowledge base '{kb_name}' uses provider 'llamaindex' "
+                    "which does not build a graph store."
+                ),
+            )
+
+        kb_dir = manager.get_knowledge_base_path(kb_name)
+        rag_storage_dir = kb_dir / "rag_storage"
+        entities_file = rag_storage_dir / "kv_store_full_entities.json"
+        relations_file = rag_storage_dir / "kv_store_full_relations.json"
+
+        if not rag_storage_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Graph storage not found for knowledge base '{kb_name}'",
+            )
+
+        if not entities_file.exists() or not relations_file.exists():
+            diagnostic_msg = (
+                "Graph data files are not available yet. "
+                "Please reprocess documents or use a graph-capable provider."
+            )
+            doc_status_file = rag_storage_dir / "kv_store_doc_status.json"
+            if doc_status_file.exists():
+                try:
+                    status_data = _safe_read_json(doc_status_file)
+                    if isinstance(status_data, dict):
+                        failed_messages = []
+                        for _, item in status_data.items():
+                            if not isinstance(item, dict):
+                                continue
+                            if str(item.get("status", "")).lower() == "failed":
+                                error_msg = _pick_first_str(item, ["error_msg", "error", "message"])
+                                if error_msg:
+                                    failed_messages.append(error_msg)
+                        if failed_messages:
+                            diagnostic_msg = (
+                                "Graph building failed in document pipeline. "
+                                f"Last error: {failed_messages[0]}"
+                            )
+                except Exception:
+                    pass
+
+            return {
+                "kb_name": kb_name,
+                "rag_provider": rag_provider,
+                "nodes": [],
+                "edges": [],
+                "stats": {
+                    "raw_nodes": 0,
+                    "raw_edges": 0,
+                    "returned_nodes": 0,
+                    "returned_edges": 0,
+                    "truncated": False,
+                },
+                "message": diagnostic_msg,
+            }
+
+        entities_raw = _safe_read_json(entities_file)
+        relations_raw = _safe_read_json(relations_file)
+        graph_payload = _build_graph_payload(
+            entities_raw=entities_raw,
+            relations_raw=relations_raw,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            min_degree=min_degree,
+            filter_noise=filter_noise,
+        )
+
+        return {
+            "kb_name": kb_name,
+            "rag_provider": rag_provider,
+            **graph_payload,
+        }
+    except HTTPException:
+        raise
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
+    except Exception as e:
+        logger.error(f"Error loading graph data for KB '{kb_name}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{kb_name}/graph/node-detail")
+async def get_graph_node_detail(
+    kb_name: str,
+    node_id: str,
+    use_llm: bool = True,
+    force_chinese: bool = True,
+    max_neighbors: int = 20,
+):
+    """Get detailed information for a graph node."""
+    if not node_id.strip():
+        raise HTTPException(status_code=400, detail="node_id is required")
+    if max_neighbors < 1 or max_neighbors > 100:
+        raise HTTPException(status_code=400, detail="max_neighbors must be between 1 and 100")
+
+    try:
+        manager = get_kb_manager()
+        kb_dir = manager.get_knowledge_base_path(kb_name)
+        rag_storage_dir = kb_dir / "rag_storage"
+        entities_file = rag_storage_dir / "kv_store_full_entities.json"
+        relations_file = rag_storage_dir / "kv_store_full_relations.json"
+        entity_chunks_file = rag_storage_dir / "kv_store_entity_chunks.json"
+        text_chunks_file = rag_storage_dir / "kv_store_text_chunks.json"
+        vdb_entities_file = rag_storage_dir / "vdb_entities.json"
+
+        if not entities_file.exists() or not relations_file.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Graph data not found for knowledge base '{kb_name}'",
+            )
+
+        entities_raw = _safe_read_json(entities_file)
+        relations_raw = _safe_read_json(relations_file)
+        graph_payload = _build_graph_payload(
+            entities_raw=entities_raw,
+            relations_raw=relations_raw,
+            max_nodes=5000,
+            max_edges=20000,
+            min_degree=0,
+            filter_noise=False,
+        )
+
+        node_id_input = node_id.strip()
+        target_node = None
+        for node in graph_payload["nodes"]:
+            nid = str(node.get("id", ""))
+            if nid == node_id_input or nid.lower() == node_id_input.lower():
+                target_node = node
+                break
+        if not target_node:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Node '{node_id_input}' not found in knowledge graph",
+            )
+
+        canonical_id = str(target_node["id"])
+        node_label = str(target_node.get("label") or canonical_id)
+
+        outgoing = [e for e in graph_payload["edges"] if e["source"] == canonical_id]
+        incoming = [e for e in graph_payload["edges"] if e["target"] == canonical_id]
+
+        neighbor_counts: dict[str, int] = {}
+        for edge in outgoing:
+            nid = edge["target"]
+            neighbor_counts[nid] = neighbor_counts.get(nid, 0) + 1
+        for edge in incoming:
+            nid = edge["source"]
+            neighbor_counts[nid] = neighbor_counts.get(nid, 0) + 1
+
+        node_lookup = {str(n["id"]): n for n in graph_payload["nodes"]}
+        related_nodes = []
+        for nid, cnt in sorted(neighbor_counts.items(), key=lambda x: x[1], reverse=True)[
+            :max_neighbors
+        ]:
+            n = node_lookup.get(nid, {})
+            related_nodes.append(
+                {
+                    "id": nid,
+                    "label": str(n.get("label") or nid),
+                    "type": str(n.get("type") or "entity"),
+                    "relation_count": cnt,
+                    "degree": int(n.get("degree") or 0),
+                }
+            )
+
+        explanation = ""
+        explanation_source = "none"
+
+        # 1) Prefer description in node payload if already available
+        raw_description = str(target_node.get("description") or "").strip()
+        if raw_description:
+            explanation = _truncate_text(raw_description, 700)
+            explanation_source = "graph_description"
+
+        # 2) Fallback to vdb_entities content (often high quality extracted definition)
+        if not explanation and vdb_entities_file.exists():
+            try:
+                vdb_data = _safe_read_json(vdb_entities_file)
+                if isinstance(vdb_data, dict):
+                    candidates = vdb_data.get("data")
+                    if isinstance(candidates, list):
+                        best_content = ""
+                        for item in candidates:
+                            if not isinstance(item, dict):
+                                continue
+                            entity_name = str(item.get("entity_name") or "").strip()
+                            if entity_name and entity_name.lower() == canonical_id.lower():
+                                content = _normalize_text(str(item.get("content") or ""))
+                                if len(content) > len(best_content):
+                                    best_content = content
+                        if best_content:
+                            explanation = _truncate_text(best_content, 700)
+                            explanation_source = "vdb_entities"
+            except Exception:
+                pass
+
+        chunk_snippets = []
+        chunk_ids: list[str] = []
+
+        if entity_chunks_file.exists():
+            try:
+                entity_chunk_data = _safe_read_json(entity_chunks_file)
+                if isinstance(entity_chunk_data, dict):
+                    rec = _get_dict_value_case_insensitive(entity_chunk_data, canonical_id)
+                    if isinstance(rec, dict):
+                        raw_chunk_ids = rec.get("chunk_ids")
+                        if isinstance(raw_chunk_ids, list):
+                            chunk_ids = [str(cid) for cid in raw_chunk_ids if str(cid).strip()]
+            except Exception:
+                pass
+
+        if chunk_ids and text_chunks_file.exists():
+            try:
+                text_chunks_data = _safe_read_json(text_chunks_file)
+                if isinstance(text_chunks_data, dict):
+                    for cid in chunk_ids[:6]:
+                        chunk_payload = text_chunks_data.get(cid)
+                        if not isinstance(chunk_payload, dict):
+                            continue
+                        content = _normalize_text(str(chunk_payload.get("content") or ""))
+                        if not content:
+                            continue
+                        chunk_snippets.append(
+                            {
+                                "chunk_id": cid,
+                                "excerpt": _truncate_text(content, 240),
+                            }
+                        )
+            except Exception:
+                pass
+
+        # 3) If still no explanation, build heuristic summary from snippets
+        if not explanation and chunk_snippets:
+            first = chunk_snippets[0]["excerpt"]
+            explanation = _truncate_text(
+                f"{node_label} appears in multiple knowledge chunks. Relevant excerpt: {first}",
+                700,
+            )
+            explanation_source = "snippet_heuristic"
+
+        # 4) Optional LLM augmentation as final fallback
+        llm_error = None
+        if use_llm and (not explanation or len(explanation) < 80):
+            try:
+                from src.services.llm import complete as llm_complete
+
+                context_text = "\n".join(
+                    [f"- {s['excerpt']}" for s in chunk_snippets[:4] if s.get("excerpt")]
+                )
+                llm_prompt = (
+                    f"请用中文简明解释术语“{node_label}”。\n"
+                    "要求：\n"
+                    "1) 先给一句定义；2) 再说明它在机器学习/深度学习中的作用；\n"
+                    "3) 不确定时明确说“可能”而不要编造；4) 总长度120-220字。\n"
+                )
+                if context_text:
+                    llm_prompt += f"\n可参考上下文：\n{context_text}\n"
+                llm_answer = await llm_complete(
+                    prompt=llm_prompt,
+                    system_prompt="你是严谨的知识图谱术语解释助手。",
+                    temperature=0.2,
+                    max_tokens=260,
+                )
+                llm_answer = _normalize_text(str(llm_answer))
+                if llm_answer:
+                    explanation = _truncate_text(llm_answer, 700)
+                    explanation_source = "llm_generated"
+            except Exception as e:
+                llm_error = str(e)
+
+        # 5) Optional Chinese normalization for explanation text
+        if use_llm and force_chinese and explanation and _looks_english_text(explanation):
+            try:
+                from src.services.llm import complete as llm_complete
+
+                translate_prompt = (
+                    f"请把下面这段术语解释翻译并改写为简洁中文（120-260字），"
+                    "保留术语含义，不要新增原文没有的结论。\n"
+                    f"术语：{node_label}\n"
+                    f"原文：{explanation}"
+                )
+                zh_explanation = await llm_complete(
+                    prompt=translate_prompt,
+                    system_prompt="你是严谨的技术术语中文解释助手。",
+                    temperature=0.2,
+                    max_tokens=320,
+                )
+                zh_explanation = _normalize_text(str(zh_explanation))
+                if zh_explanation:
+                    explanation = _truncate_text(zh_explanation, 700)
+                    explanation_source = f"{explanation_source}_zh"
+            except Exception as e:
+                if not llm_error:
+                    llm_error = str(e)
+
+        return {
+            "kb_name": kb_name,
+            "node": {
+                "id": canonical_id,
+                "label": node_label,
+                "type": str(target_node.get("type") or "entity"),
+                "degree": int(target_node.get("degree") or 0),
+            },
+            "explanation": explanation,
+            "explanation_source": explanation_source,
+            "snippet_count": len(chunk_snippets),
+            "chunk_snippets": chunk_snippets,
+            "stats": {
+                "outgoing": len(outgoing),
+                "incoming": len(incoming),
+                "neighbor_count": len(neighbor_counts),
+            },
+            "related_nodes": related_nodes,
+            "llm_error": llm_error,
+        }
+    except HTTPException:
+        raise
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
+    except Exception as e:
+        logger.error(f"Error loading node detail for KB '{kb_name}', node '{node_id}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

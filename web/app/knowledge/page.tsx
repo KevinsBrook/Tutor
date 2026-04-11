@@ -33,6 +33,7 @@ import {
   FileText,
   Image as ImageIcon,
   Layers,
+  Network,
   MoreVertical,
   Plus,
   Search,
@@ -1204,6 +1205,16 @@ export default function KnowledgePage() {
                       {t("Set Default")}
                     </button>
                   )}
+                  <button
+                    onClick={() => {
+                      window.location.href = `/knowledge/${encodeURIComponent(kb.name)}/graph`;
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1.5 text-xs font-medium text-teal-700 transition-colors hover:bg-teal-100 dark:border-teal-900/60 dark:bg-teal-950/35 dark:text-teal-300 dark:hover:bg-teal-900/40"
+                    title={t("View Knowledge Graph")}
+                  >
+                    <Network className="w-4 h-4" />
+                    {t("Graph")}
+                  </button>
                   <button
                     onClick={() => {
                       setTargetKb(kb.name);

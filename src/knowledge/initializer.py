@@ -191,7 +191,7 @@ class KnowledgeBaseInitializer:
 
         return copied_files
 
-    async def process_documents(self):
+    async def process_documents(self) -> bool:
         """Process documents using RAGService with dynamic provider selection"""
         # Use the provider passed during initialization, or fallback to env var
         provider = self.rag_provider or os.getenv("RAG_PROVIDER", "raganything")
@@ -215,7 +215,7 @@ class KnowledgeBaseInitializer:
             self.progress_tracker.update(
                 ProgressStage.ERROR, "No documents found to process", error="No documents found"
             )
-            return
+            return False
 
         logger.info(f"Found {len(doc_files)} document(s) to process")
         self.progress_tracker.update(
@@ -235,6 +235,7 @@ class KnowledgeBaseInitializer:
 
         # Convert Path objects to strings for file paths
         file_paths = [str(doc_file) for doc_file in doc_files]
+        process_success = False
 
         try:
             # Process all documents using the RAGService
@@ -256,6 +257,7 @@ class KnowledgeBaseInitializer:
                     current=len(doc_files),
                     total=len(doc_files),
                 )
+                process_success = True
             else:
                 logger.error("Document processing failed")
                 self.progress_tracker.update(
@@ -290,6 +292,7 @@ class KnowledgeBaseInitializer:
 
         # Display statistics
         await self.display_statistics_generic()
+        return process_success
 
     async def fix_structure(self):
         """
@@ -474,15 +477,34 @@ class KnowledgeBaseInitializer:
         vector_store_dir = self.base_dir / self.kb_name / "vector_store"
 
         try:
+            def _count_graph_items(data: object, list_key: str) -> int:
+                if isinstance(data, list):
+                    return len(data)
+                if isinstance(data, dict):
+                    total = 0
+                    matched_nested = False
+                    for value in data.values():
+                        if isinstance(value, dict):
+                            nested = value.get(list_key)
+                            if isinstance(nested, list):
+                                total += len(nested)
+                                matched_nested = True
+                    if matched_nested:
+                        return total
+                    return len(data)
+                return 0
+
             if entities_file.exists():
                 with open(entities_file, encoding="utf-8") as f:
                     entities = json.load(f)
-                    logger.info(f"Knowledge entities: {len(entities)}")
+                    logger.info(f"Knowledge entities: {_count_graph_items(entities, 'entity_names')}")
 
             if relations_file.exists():
                 with open(relations_file, encoding="utf-8") as f:
                     relations = json.load(f)
-                    logger.info(f"Knowledge relations: {len(relations)}")
+                    logger.info(
+                        f"Knowledge relations: {_count_graph_items(relations, 'relation_pairs')}"
+                    )
 
             if chunks_file.exists():
                 with open(chunks_file, encoding="utf-8") as f:

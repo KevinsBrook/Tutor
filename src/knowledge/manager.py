@@ -326,10 +326,21 @@ class KnowledgeBaseManager:
         # KB might not have a directory yet if still initializing
         dir_exists = kb_dir.exists()
 
-        # For old KBs without status field, determine status from rag_storage
+        # For old KBs without status field, infer from actual index files
         if not status and dir_exists:
             rag_storage_dir = kb_dir / "rag_storage"
-            if rag_storage_dir.exists() and any(rag_storage_dir.iterdir()):
+            llamaindex_storage_dir = kb_dir / "llamaindex_storage"
+            has_graph_files = (
+                (rag_storage_dir / "kv_store_full_entities.json").exists()
+                or (rag_storage_dir / "kv_store_full_relations.json").exists()
+                or (rag_storage_dir / "kv_store_text_chunks.json").exists()
+            )
+            has_llamaindex_files = (
+                llamaindex_storage_dir.exists()
+                and llamaindex_storage_dir.is_dir()
+                and any(llamaindex_storage_dir.iterdir())
+            )
+            if has_graph_files or has_llamaindex_files:
                 status = "ready"
             else:
                 status = "unknown"
@@ -361,6 +372,7 @@ class KnowledgeBaseManager:
         images_dir = kb_dir / "images" if dir_exists else None
         content_list_dir = kb_dir / "content_list" if dir_exists else None
         rag_storage_dir = kb_dir / "rag_storage" if dir_exists else None
+        llamaindex_storage_dir = kb_dir / "llamaindex_storage" if dir_exists else None
 
         raw_count = 0
         images_count = 0
@@ -396,9 +408,31 @@ class KnowledgeBaseManager:
         if not rag_provider:
             rag_provider = kb_config.get("rag_provider")
 
-        rag_initialized = (
-            dir_exists and rag_storage_dir and rag_storage_dir.exists() and rag_storage_dir.is_dir()
-        )
+        # Determine whether index data is actually present (not just empty directories)
+        if rag_provider == "llamaindex":
+            rag_initialized = (
+                dir_exists
+                and llamaindex_storage_dir
+                and llamaindex_storage_dir.exists()
+                and llamaindex_storage_dir.is_dir()
+                and any(llamaindex_storage_dir.iterdir())
+            )
+        else:
+            entities_file = rag_storage_dir / "kv_store_full_entities.json" if rag_storage_dir else None
+            relations_file = rag_storage_dir / "kv_store_full_relations.json" if rag_storage_dir else None
+            chunks_file = rag_storage_dir / "kv_store_text_chunks.json" if rag_storage_dir else None
+
+            rag_initialized = bool(
+                dir_exists
+                and rag_storage_dir
+                and rag_storage_dir.exists()
+                and rag_storage_dir.is_dir()
+                and (
+                    (entities_file and entities_file.exists())
+                    or (relations_file and relations_file.exists())
+                    or (chunks_file and chunks_file.exists())
+                )
+            )
 
         info["statistics"] = {
             "raw_documents": raw_count,
@@ -414,6 +448,23 @@ class KnowledgeBaseManager:
         # Try to get RAG statistics
         if rag_initialized:
             try:
+                def _count_graph_items(data: object, list_key: str) -> int:
+                    if isinstance(data, list):
+                        return len(data)
+                    if isinstance(data, dict):
+                        total = 0
+                        matched_nested = False
+                        for value in data.values():
+                            if isinstance(value, dict):
+                                nested = value.get(list_key)
+                                if isinstance(nested, list):
+                                    total += len(nested)
+                                    matched_nested = True
+                        if matched_nested:
+                            return total
+                        return len(data)
+                    return 0
+
                 entities_file = rag_storage_dir / "kv_store_full_entities.json"
                 relations_file = rag_storage_dir / "kv_store_full_relations.json"
                 chunks_file = rag_storage_dir / "kv_store_text_chunks.json"
@@ -423,9 +474,7 @@ class KnowledgeBaseManager:
                     try:
                         with open(entities_file, encoding="utf-8") as f:
                             entities_data = json.load(f)
-                            rag_stats["entities"] = (
-                                len(entities_data) if isinstance(entities_data, (list, dict)) else 0
-                            )
+                            rag_stats["entities"] = _count_graph_items(entities_data, "entity_names")
                     except Exception:
                         pass
 
@@ -433,10 +482,8 @@ class KnowledgeBaseManager:
                     try:
                         with open(relations_file, encoding="utf-8") as f:
                             relations_data = json.load(f)
-                            rag_stats["relations"] = (
-                                len(relations_data)
-                                if isinstance(relations_data, (list, dict))
-                                else 0
+                            rag_stats["relations"] = _count_graph_items(
+                                relations_data, "relation_pairs"
                             )
                     except Exception:
                         pass
