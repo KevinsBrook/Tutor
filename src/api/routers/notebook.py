@@ -9,6 +9,8 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import json
+from src.services.llm import get_llm_client
 
 # Ensure module can be imported
 project_root = Path(__file__).parent.parent.parent.parent
@@ -18,8 +20,107 @@ if str(project_root) not in sys.path:
 from src.api.utils.notebook_manager import notebook_manager
 
 router = APIRouter()
+#xinzeng
+def format_session_messages(messages: list[dict]) -> str:
+    """Format session messages into readable conversation text."""
+    lines = []
 
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
 
+        if not content:
+            continue
+
+        if role == "user":
+            lines.append(f"用户：{content}")
+        elif role == "assistant":
+            lines.append(f"助手：{content}")
+        else:
+            lines.append(f"{role}：{content}")
+
+    return "\n\n".join(lines)
+def build_note_prompt(
+    conversation_text: str,
+    generate_summary: bool,
+    generate_outline: bool,
+    generate_mindmap: bool,
+) -> str:
+    """Build LLM prompt for optional note generation."""
+
+    tasks = []
+
+    if generate_summary:
+        tasks.append("""
+1. summary：
+请总结整段对话内容，要求包括：
+- 主题
+- 核心问题
+- 关键结论
+- 重要知识点
+- 简要说明
+输出为结构化 JSON 对象。
+""")
+
+    if generate_outline:
+        tasks.append("""
+2. outline：
+请将对话内容整理为结构化学习大纲。
+要求：
+- 分层清晰
+- 使用一级标题、二级标题、三级要点
+- 输出为 JSON 数组
+格式示例：
+[
+  {
+    "title": "一级标题",
+    "children": [
+      {
+        "title": "二级标题",
+        "children": []
+      }
+    ]
+  }
+]
+""")
+
+    if generate_mindmap:
+        tasks.append("""
+3. mindmap：
+请将对话内容整理为思维导图结构。
+要求：
+- 输出为树形 JSON
+- 使用 topic 和 children 字段
+格式示例：
+{
+  "topic": "中心主题",
+  "children": [
+    {"topic": "分支1", "children": []},
+    {"topic": "分支2", "children": [
+      {"topic": "子分支", "children": []}
+    ]}
+  ]
+}
+""")
+
+    task_text = "\n".join(tasks)
+
+    return f"""
+请根据下面的对话内容，按要求生成学习整理结果。
+
+输出要求：
+- 使用中文
+- 只输出 JSON
+- 不要输出任何 JSON 以外的解释文字
+- JSON 中只包含用户要求生成的字段
+
+用户选择生成的内容：
+{task_text}
+
+对话内容：
+{conversation_text}
+"""
+#xinzengjieshu
 # === Request/Response Models ===
 
 
@@ -57,6 +158,15 @@ class RemoveRecordRequest(BaseModel):
     """Remove record request"""
 
     record_id: str
+#xinzeng
+class GenerateFromChatRequest(BaseModel):
+    """Generate notebook content from chat session"""
+
+    session_id: str
+    generate_summary: bool = False
+    generate_outline: bool = False
+    generate_mindmap: bool = False
+#xinzengjieshu
 
 
 # === API Endpoints ===
@@ -240,6 +350,70 @@ async def remove_record(notebook_id: str, record_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/generate-from-chat")
+async def generate_from_chat(request: GenerateFromChatRequest):
+    """
+    Generate summary / outline / mindmap from a chat session.
+    """
+    if not (
+        request.generate_summary
+        or request.generate_outline
+        or request.generate_mindmap
+    ):
+        raise HTTPException(status_code=400, detail="请至少选择一种生成内容")
+
+    try:
+        from src.agents.chat.session_manager import SessionManager
+
+        session_manager = SessionManager()
+        session_data = session_manager.get_session(request.session_id)
+
+        if not session_data:
+            raise HTTPException(status_code=404, detail="找不到对应会话")
+
+        messages = session_data.get("messages", [])
+        if not messages:
+            raise HTTPException(status_code=400, detail="当前会话没有可整理内容")
+
+        conversation_text = format_session_messages(messages)
+
+        prompt = build_note_prompt(
+            conversation_text=conversation_text,
+            generate_summary=request.generate_summary,
+            generate_outline=request.generate_outline,
+            generate_mindmap=request.generate_mindmap,
+        )
+
+        llm_client = get_llm_client()
+
+        result_text = await llm_client.complete(
+            prompt=prompt,
+            system_prompt="你是一个帮助学生整理学习内容的中文学习助手。请严格按照要求输出 JSON。",
+        )
+
+        try:
+            parsed = json.loads(result_text)
+        except Exception:
+            parsed = {
+                "raw_result": result_text
+            }
+
+        return {
+            "success": True,
+            "session_id": request.session_id,
+            "generated": {
+                "summary": request.generate_summary,
+                "outline": request.generate_outline,
+                "mindmap": request.generate_mindmap,
+            },
+            "result": parsed,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/health")
 async def health_check():

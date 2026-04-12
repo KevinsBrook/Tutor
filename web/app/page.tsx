@@ -53,6 +53,8 @@ export default function HomePage() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [showNotebookModal, setShowNotebookModal] = useState(false);
+  const [saveToNotebookLoading, setSaveToNotebookLoading] = useState(false);
+  const [generatedNotebookContent, setGeneratedNotebookContent] = useState<any>(null);
 
   // Format chat history for notebook
   const formatChatForNotebook = () => {
@@ -122,6 +124,138 @@ export default function HomePage() {
       });
     }
   }, [chatState.messages]);
+  const getChatSessionId = () => {
+    return (
+      (chatState as any).sessionId ||
+      (chatState as any).session_id ||
+      (chatState as any).currentSessionId ||
+      (chatState as any).current_session_id ||
+      ""
+    );
+  };
+  const buildGeneratedNoteForNotebook = () => {
+    const fallback = formatChatForNotebook();
+  
+    const firstUserMsg = chatState.messages.find((m) => m.role === "user");
+    const titleBase =
+      firstUserMsg?.content?.slice(0, 50) +
+        (firstUserMsg && firstUserMsg.content.length > 50 ? "..." : "") ||
+      t("Chat Session");
+  
+    if (!generatedNotebookContent) {
+      return {
+        title: fallback.title || `Chat: ${titleBase}`,
+        userQuery: fallback.userQuery || "",
+        output: fallback.output || "",
+        metadata: {
+          source_type: "chat_raw",
+          session_id:
+            (chatState as any).sessionId ||
+            (chatState as any).session_id ||
+            (chatState as any).currentSessionId ||
+            (chatState as any).current_session_id ||
+            null,
+          message_count: chatState.messages.length,
+          enable_rag: chatState.enableRag,
+          enable_web_search: chatState.enableWebSearch,
+        },
+      };
+    }
+  
+    const summaryPart = generatedNotebookContent.summary
+      ? `## 总结\n\n${
+          typeof generatedNotebookContent.summary === "string"
+            ? generatedNotebookContent.summary
+            : JSON.stringify(generatedNotebookContent.summary, null, 2)
+        }`
+      : "";
+  
+    const outlinePart = generatedNotebookContent.outline
+      ? `## 大纲\n\n\`\`\`json\n${JSON.stringify(
+          generatedNotebookContent.outline,
+          null,
+          2,
+        )}\n\`\`\``
+      : "";
+  
+    const mindmapPart = generatedNotebookContent.mindmap
+      ? `## 思维导图\n\n\`\`\`json\n${JSON.stringify(
+          generatedNotebookContent.mindmap,
+          null,
+          2,
+        )}\n\`\`\``
+      : "";
+    
+  
+    return {
+      title: `Chat Note: ${titleBase}`,
+      userQuery:
+        chatState.messages
+          .filter((m) => m.role === "user")
+          .map((m) => m.content)
+          .join("\n\n") || fallback.userQuery || "",
+      output: [summaryPart, outlinePart, mindmapPart]
+        .filter(Boolean)
+        .join("\n\n---\n\n"),
+      metadata: {
+        source_type: "chat_generated_note",
+        session_id:
+          (chatState as any).sessionId ||
+          (chatState as any).session_id ||
+          (chatState as any).currentSessionId ||
+          (chatState as any).current_session_id ||
+          null,
+        message_count: chatState.messages.length,
+        enable_rag: chatState.enableRag,
+        enable_web_search: chatState.enableWebSearch,
+        generated_summary: generatedNotebookContent.summary || null,
+        generated_outline: generatedNotebookContent.outline || null,
+        generated_mindmap: generatedNotebookContent.mindmap || null,
+      },
+    };
+  };
+  const handleSaveToNotebook = async () => {
+    try {
+      if (chatState.messages.length === 0) return;
+  
+      const sessionId = getChatSessionId();
+  
+      if (!sessionId) {
+        alert("当前对话没有有效的 session_id，无法生成整理笔记。请先确认聊天会话已成功保存。");
+        return;
+      }
+  
+      setSaveToNotebookLoading(true);
+  
+      const response = await fetch(apiUrl("/api/v1/notebook/generate-from-chat"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          generate_summary: true,
+          generate_outline: true,
+          generate_mindmap: true,
+        }),
+      });
+  
+      const data = await response.json();
+  
+      if (!response.ok) {
+        throw new Error(data.detail || "生成整理笔记失败");
+      }
+  
+      setGeneratedNotebookContent(data.result);
+      setShowNotebookModal(true);
+    } catch (error: any) {
+      console.error("Failed to generate notebook content:", error);
+      alert(error.message || "保存到笔记本失败");
+    } finally {
+      setSaveToNotebookLoading(false);
+    }
+  };
+  
 
   const handleSend = () => {
     if (!inputMessage.trim() || chatState.isLoading) return;
@@ -200,6 +334,7 @@ export default function HomePage() {
   ];
 
   const hasMessages = chatState.messages.length > 0;
+  const generatedNotebookRecord = buildGeneratedNoteForNotebook();
 
   return (
     <div className="animate-fade-in flex h-[calc(100vh-7rem)] min-h-0 flex-col overflow-hidden">
@@ -401,11 +536,16 @@ export default function HomePage() {
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setShowNotebookModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"
+                onClick={handleSaveToNotebook}
+                disabled={saveToNotebookLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors disabled:opacity-50"
                 title={t("Save to Notebook")}
               >
-                <Save className="w-3.5 h-3.5" />
+                {saveToNotebookLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
                 {t("Save to Notebook")}
               </button>
               <button
@@ -556,19 +696,18 @@ export default function HomePage() {
       )}
 
       {/* Add to Notebook Modal */}
+      
       <AddToNotebookModal
         isOpen={showNotebookModal}
-        onClose={() => setShowNotebookModal(false)}
-        recordType="chat"
-        title={formatChatForNotebook().title}
-        userQuery={formatChatForNotebook().userQuery}
-        output={formatChatForNotebook().output}
-        metadata={{
-          session_id: chatState.sessionId,
-          message_count: chatState.messages.length,
-          enable_rag: chatState.enableRag,
-          enable_web_search: chatState.enableWebSearch,
+        onClose={() => {
+          setShowNotebookModal(false);
+          setGeneratedNotebookContent(null);
         }}
+        recordType="chat"
+        title={generatedNotebookRecord.title}
+        userQuery={generatedNotebookRecord.userQuery}
+        output={generatedNotebookRecord.output}
+        metadata={generatedNotebookRecord.metadata}
         kbName={chatState.enableRag ? chatState.selectedKb : undefined}
       />
     </div>
