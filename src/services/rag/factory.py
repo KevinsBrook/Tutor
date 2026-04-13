@@ -52,12 +52,40 @@ def _init_pipelines():
 
         return LlamaIndexPipeline(**kwargs)
 
+    def _build_llamaindex_v1(**kwargs):
+        # LlamaIndex v1: strategies 1~3 (semantic chunk + overlap + parent-child chunking)
+        from .pipelines.llamaindex_v1 import LlamaIndexPipeline
+
+        return LlamaIndexPipeline(**kwargs)
+
+    def _build_llamaindex_v2(**kwargs):
+        # LlamaIndex v2: add strategies 4 and 9 (hierarchical retrieval + citation enhancement)
+        from .pipelines.llamaindex_v2 import LlamaIndexPipeline
+
+        return LlamaIndexPipeline(**kwargs)
+
+    def _build_llamaindex_v3(**kwargs):
+        # LlamaIndex v3: add strategies 5 and 6 (query rewrite + hybrid retrieval)
+        from .pipelines.llamaindex_v3 import LlamaIndexPipeline
+
+        return LlamaIndexPipeline(**kwargs)
+
+    def _build_llamaindex_v4(**kwargs):
+        # LlamaIndex v4: add strategies 7 and 8 (rerank + adaptive top-k)
+        from .pipelines.llamaindex_v4 import LlamaIndexPipeline
+
+        return LlamaIndexPipeline(**kwargs)
+
     _PIPELINES.update(
         {
             "raganything": _build_raganything,  # Full multimodal: MinerU parser, deep analysis (slow, thorough)
             "raganything_docling": _build_raganything_docling,  # Docling parser: Office/HTML friendly, easier setup
             "lightrag": _build_lightrag,  # Knowledge graph: PDFParser, fast text-only (medium speed)
             "llamaindex": _build_llamaindex,  # Vector-only: Simple chunking, fast (fastest)
+            "llamaindex_v1": _build_llamaindex_v1,  # v1 experiment track (strategies 1~3)
+            "llamaindex_v2": _build_llamaindex_v2,  # v2 experiment track (strategies 4+9 on top of v1)
+            "llamaindex_v3": _build_llamaindex_v3,  # v3 experiment track (strategies 5+6 on top of v2)
+            "llamaindex_v4": _build_llamaindex_v4,  # v4 experiment track (strategies 7+8 on top of v3)
         }
     )
     _PIPELINES_INITIALIZED = True
@@ -115,6 +143,26 @@ def list_pipelines() -> List[Dict[str, str]]:
             "id": "llamaindex",
             "name": "LlamaIndex",
             "description": "Pure vector retrieval, fastest processing speed.",
+        },
+        {
+            "id": "llamaindex_v1",
+            "name": "LlamaIndex v1",
+            "description": "Strategies 1~3: semantic chunking + overlap + parent-child chunking.",
+        },
+        {
+            "id": "llamaindex_v2",
+            "name": "LlamaIndex v2",
+            "description": "Strategies 4+9: hierarchical retrieval + citation enhancement (built on v1).",
+        },
+        {
+            "id": "llamaindex_v3",
+            "name": "LlamaIndex v3",
+            "description": "Strategies 5+6: query rewrite + hybrid retrieval (built on v2).",
+        },
+        {
+            "id": "llamaindex_v4",
+            "name": "LlamaIndex v4",
+            "description": "Strategies 7+8: rerank + adaptive top-k (built on v3).",
         },
         {
             "id": "lightrag",

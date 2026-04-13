@@ -60,6 +60,22 @@ def __getattr__(name: str):
         from .pipelines.llamaindex import LlamaIndexPipeline
 
         return LlamaIndexPipeline
+    if name == "LlamaIndexV1Pipeline":
+        from .pipelines.llamaindex_v1 import LlamaIndexPipeline
+
+        return LlamaIndexPipeline
+    if name == "LlamaIndexV2Pipeline":
+        from .pipelines.llamaindex_v2 import LlamaIndexPipeline
+
+        return LlamaIndexPipeline
+    if name == "LlamaIndexV3Pipeline":
+        from .pipelines.llamaindex_v3 import LlamaIndexPipeline
+
+        return LlamaIndexPipeline
+    if name == "LlamaIndexV4Pipeline":
+        from .pipelines.llamaindex_v4 import LlamaIndexPipeline
+
+        return LlamaIndexPipeline
     if name == "LightRAGPipeline":
         from .pipelines.lightrag import LightRAGPipeline
 
