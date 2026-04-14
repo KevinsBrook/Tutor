@@ -80,6 +80,22 @@ def __getattr__(name: str):
         from .pipelines.lightrag import LightRAGPipeline
 
         return LightRAGPipeline
+    if name == "LightRAGV1Pipeline":
+        from .pipelines.lightrag_v1 import LightRAGPipeline
+
+        return LightRAGPipeline
+    if name == "LightRAGV2Pipeline":
+        from .pipelines.lightrag_v2 import LightRAGPipeline
+
+        return LightRAGPipeline
+    if name == "LightRAGV3Pipeline":
+        from .pipelines.lightrag_v3 import LightRAGPipeline
+
+        return LightRAGPipeline
+    if name == "LightRAGV4Pipeline":
+        from .pipelines.lightrag_v4 import LightRAGPipeline
+
+        return LightRAGPipeline
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -99,4 +115,9 @@ __all__ = [
     "has_pipeline",
     # Pipeline implementations (lazy loaded)
     "RAGAnythingPipeline",
+    "LightRAGPipeline",
+    "LightRAGV1Pipeline",
+    "LightRAGV2Pipeline",
+    "LightRAGV3Pipeline",
+    "LightRAGV4Pipeline",
 ]

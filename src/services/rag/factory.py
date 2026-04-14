@@ -45,6 +45,30 @@ def _init_pipelines():
 
         return LightRAGPipeline(kb_base_dir=kb_base_dir)
 
+    def _build_lightrag_v1(kb_base_dir: Optional[str] = None, **kwargs):
+        # LightRAG v1: phase-1 optimizations
+        from .pipelines.lightrag_v1 import LightRAGPipeline
+
+        return LightRAGPipeline(kb_base_dir=kb_base_dir)
+
+    def _build_lightrag_v2(kb_base_dir: Optional[str] = None, **kwargs):
+        # LightRAG v2: phase-2 graph quality strategies
+        from .pipelines.lightrag_v2 import LightRAGPipeline
+
+        return LightRAGPipeline(kb_base_dir=kb_base_dir)
+
+    def _build_lightrag_v3(kb_base_dir: Optional[str] = None, **kwargs):
+        # LightRAG v3: phase-3 retrieval strategies
+        from .pipelines.lightrag_v3 import LightRAGPipeline
+
+        return LightRAGPipeline(kb_base_dir=kb_base_dir)
+
+    def _build_lightrag_v4(kb_base_dir: Optional[str] = None, **kwargs):
+        # LightRAG v4: phase-4 evolution strategies
+        from .pipelines.lightrag_v4 import LightRAGPipeline
+
+        return LightRAGPipeline(kb_base_dir=kb_base_dir)
+
     def _build_llamaindex(**kwargs):
         # LlamaIndexPipeline depends on optional `llama_index` package.
         # Import it only when explicitly requested.
@@ -81,6 +105,10 @@ def _init_pipelines():
             "raganything": _build_raganything,  # Full multimodal: MinerU parser, deep analysis (slow, thorough)
             "raganything_docling": _build_raganything_docling,  # Docling parser: Office/HTML friendly, easier setup
             "lightrag": _build_lightrag,  # Knowledge graph: PDFParser, fast text-only (medium speed)
+            "lightrag_v1": _build_lightrag_v1,  # phase-1 track
+            "lightrag_v2": _build_lightrag_v2,  # phase-2 track
+            "lightrag_v3": _build_lightrag_v3,  # phase-3 track
+            "lightrag_v4": _build_lightrag_v4,  # phase-4 track
             "llamaindex": _build_llamaindex,  # Vector-only: Simple chunking, fast (fastest)
             "llamaindex_v1": _build_llamaindex_v1,  # v1 experiment track (strategies 1~3)
             "llamaindex_v2": _build_llamaindex_v2,  # v2 experiment track (strategies 4+9 on top of v1)
@@ -117,7 +145,7 @@ def get_pipeline(name: str = "raganything", kb_base_dir: Optional[str] = None, *
         # Handle different pipeline types:
         # - lightrag: callable that accepts kb_base_dir and returns a composed RAGPipeline
         # - llamaindex, raganything, raganything_docling: callables that instantiate class-based pipelines
-        if name in ("lightrag",):
+        if name in ("lightrag", "lightrag_v1", "lightrag_v2", "lightrag_v3", "lightrag_v4"):
             return factory(kb_base_dir=kb_base_dir, **kwargs)
 
         if kb_base_dir:
@@ -168,6 +196,26 @@ def list_pipelines() -> List[Dict[str, str]]:
             "id": "lightrag",
             "name": "LightRAG",
             "description": "Lightweight knowledge graph retrieval, fast processing of text documents.",
+        },
+        {
+            "id": "lightrag_v1",
+            "name": "LightRAG v1",
+            "description": "Phase 1: cold-start optimization + sentence cleaning + low-information filtering + basic entity normalization.",
+        },
+        {
+            "id": "lightrag_v2",
+            "name": "LightRAG v2",
+            "description": "Phase 2: relation whitelist/schema + graph noise control (built on v1).",
+        },
+        {
+            "id": "lightrag_v3",
+            "name": "LightRAG v3",
+            "description": "Phase 3: mode auto-routing + query rewrite + dual-path fusion + lightweight rerank (built on v2).",
+        },
+        {
+            "id": "lightrag_v4",
+            "name": "LightRAG v4",
+            "description": "Phase 4: incremental manifest update + anchor-constrained retrieval + dynamic update hooks (built on v3).",
         },
         {
             "id": "raganything",

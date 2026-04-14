@@ -230,7 +230,7 @@ class DocumentAdder:
         # Dispatch to provider-specific implementation
         if provider == "llamaindex":
             return await self._process_llamaindex(new_files)
-        elif provider == "lightrag":
+        elif provider in ("lightrag", "lightrag_v1", "lightrag_v2", "lightrag_v3", "lightrag_v4"):
             return await self._process_lightrag(new_files)
         elif provider == "raganything":
             return await self._process_raganything(new_files, parser="mineru")
