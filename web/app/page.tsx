@@ -20,6 +20,7 @@ import {
   GraduationCap,
   PenTool,
   Save,
+  Upload,
 } from "lucide-react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -49,6 +50,11 @@ export default function HomePage() {
   const { t } = useTranslation();
 
   const [inputMessage, setInputMessage] = useState("");
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [directFileQaLoading, setDirectFileQaLoading] = useState(false);
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -91,6 +97,7 @@ export default function HomePage() {
       output: formattedMessages,
     };
   };
+
 
   // Fetch knowledge bases
   useEffect(() => {
@@ -255,7 +262,142 @@ export default function HomePage() {
       setSaveToNotebookLoading(false);
     }
   };
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    setSelectedFiles(files);
+    setUploadMessage("");
+  };
+  const handleUploadToKnowledgeBase = async () => {
+    if (!chatState.selectedKb) {
+      alert("请先选择知识库");
+      return;
+    }
   
+    if (selectedFiles.length === 0) {
+      alert("请先选择文件");
+      return;
+    }
+  
+    try {
+      setUploadingFiles(true);
+      setUploadMessage("");
+  
+      const formData = new FormData();
+      selectedFiles.forEach((file) => {
+        formData.append("files", file);
+      });
+  
+      const response = await fetch(
+        apiUrl(`/api/v1/knowledge/${chatState.selectedKb}/upload`),
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+  
+      const data = await response.json();
+  
+      if (!response.ok) {
+        throw new Error(data.detail || "上传失败");
+      }
+  
+      setUploadMessage(
+        `已成功上传 ${selectedFiles.length} 个文件到知识库 ${chatState.selectedKb}，接下来提问时将优先基于该知识库检索回答。`
+      );
+      setSelectedFiles([]);
+  
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+  
+      setChatState((prev) => ({
+        ...prev,
+        enableRag: true,
+      }));
+    } catch (error: any) {
+      console.error("Upload failed:", error);
+      alert(error.message || "上传失败");
+    } finally {
+      setUploadingFiles(false);
+    }
+  };
+  const handleDirectFileQa = async () => {
+  if (selectedFiles.length === 0) {
+    alert("请先选择文件");
+    return;
+  }
+
+  if (!inputMessage.trim()) {
+    alert("请先输入你的问题");
+    return;
+  }
+
+  try {
+    setDirectFileQaLoading(true);
+    setUploadMessage("");
+
+    const formData = new FormData();
+    formData.append("message", inputMessage);
+
+    const sessionId = getChatSessionId();
+    if (sessionId) {
+      formData.append("session_id", sessionId);
+    }
+
+    selectedFiles.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    const response = await fetch(apiUrl("/api/v1/chat/with-files"), {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "基于文件回答失败");
+    }
+
+    const nextSessionId = data.session_id;
+
+    // 把这次问答直接插入聊天记录
+    setChatState((prev: any) => ({
+      ...prev,
+      sessionId: nextSessionId || prev.sessionId,
+      session_id: nextSessionId || prev.session_id,
+      currentSessionId: nextSessionId || prev.currentSessionId,
+      current_session_id: nextSessionId || prev.current_session_id,
+      messages: [
+        ...prev.messages,
+        {
+          role: "user",
+          content: inputMessage,
+        },
+        {
+          role: "assistant",
+          content: data.answer || "未返回回答",
+          sources: {
+            direct_files: data.sources?.direct_files || [],
+          },
+        },
+      ],
+    }));
+
+    setUploadMessage("已基于本次上传文件完成回答。");
+    setInputMessage("");
+    setSelectedFiles([]);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  } catch (error: any) {
+    console.error("Direct file QA failed:", error);
+    alert(error.message || "基于文件回答失败");
+  } finally {
+    setDirectFileQaLoading(false);
+  }
+};
 
   const handleSend = () => {
     if (!inputMessage.trim() || chatState.isLoading) return;
@@ -414,6 +556,67 @@ export default function HomePage() {
                     </option>
                   ))}
                 </select>
+              )}
+            </div>
+            <div className="mb-3 space-y-2 px-1">
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  id="chat-file-upload-empty"
+                />
+                <label
+                  htmlFor="chat-file-upload-empty"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  上传文件
+                </label>
+
+                <button
+                  onClick={handleUploadToKnowledgeBase}
+                  disabled={uploadingFiles || selectedFiles.length === 0 || !chatState.selectedKb}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {uploadingFiles ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="w-3.5 h-3.5" />
+                  )}
+                  上传到知识库
+                </button>
+                <button
+                  onClick={handleDirectFileQa}
+                  disabled={directFileQaLoading || selectedFiles.length === 0 || !inputMessage.trim()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {directFileQaLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <FileText className="w-3.5 h-3.5" />
+                  )}
+                  基于本次文件回答
+                </button>
+              </div>
+
+              {selectedFiles.length > 0 && (
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  已选择：{selectedFiles.map((f) => f.name).join("，")}
+                </div>
+              )}
+
+              {uploadMessage && (
+                <div className="text-xs text-emerald-600 dark:text-emerald-400">
+                  {uploadMessage}
+                </div>
+              )}
+              {chatState.selectedKb && (
+                <div className="text-xs text-blue-600 dark:text-blue-400">
+                  当前连接知识库：{chatState.selectedKb}
+                </div>
               )}
             </div>
 
@@ -606,7 +809,9 @@ export default function HomePage() {
                   {/* Sources */}
                   {msg.role !== "user" &&
                     msg.sources &&
-                    (msg.sources.rag?.length ?? 0) + (msg.sources.web?.length ?? 0) >
+                    (msg.sources.rag?.length ?? 0) +
+                      (msg.sources.web?.length ?? 0) +
+                      (msg.sources.direct_files?.length ?? 0) >
                       0 && (
                       <div className="flex flex-wrap gap-2">
                         {msg.sources.rag?.map((source, i) => (
@@ -632,6 +837,17 @@ export default function HomePage() {
                             </span>
                             <ExternalLink className="w-3 h-3" />
                           </a>
+                        ))}
+                        {msg.sources.direct_files?.map((source: any, i: number) => (
+                          <div
+                            key={`direct-file-${i}`}
+                            className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-lg text-xs"
+                          >
+                            <FileText className="w-3 h-3" />
+                            <span className="max-w-[150px] truncate">
+                              {source.name || "本次上传文件"}
+                            </span>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -668,6 +884,67 @@ export default function HomePage() {
 
           {/* Input Area - Fixed at bottom */}
           <div className="sticky bottom-0 z-10 border-t border-white/70 dark:border-slate-700 bg-white/90 dark:bg-slate-900/85 px-6 py-4 rounded-b-3xl">
+            <div className="max-w-4xl mx-auto mb-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  id="chat-file-upload-active"
+                />
+                <label
+                  htmlFor="chat-file-upload-active"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  上传文件
+                </label>
+
+                <button
+                  onClick={handleUploadToKnowledgeBase}
+                  disabled={uploadingFiles || selectedFiles.length === 0 || !chatState.selectedKb}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {uploadingFiles ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="w-3.5 h-3.5" />
+                  )}
+                 上传到知识库
+                </button>
+                <button
+                  onClick={handleDirectFileQa}
+                  disabled={directFileQaLoading || selectedFiles.length === 0 || !inputMessage.trim()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {directFileQaLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <FileText className="w-3.5 h-3.5" />
+                  )}
+                  基于本次文件回答
+                </button>
+              </div>
+
+              {selectedFiles.length > 0 && (
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  已选择：{selectedFiles.map((f) => f.name).join("，")}
+                </div>
+              )}
+
+              {uploadMessage && (
+                <div className="text-xs text-emerald-600 dark:text-emerald-400">
+                  {uploadMessage}
+                </div>
+              )}
+              {chatState.selectedKb && (
+                <div className="text-xs text-blue-600 dark:text-blue-400">
+                  当前连接知识库：{chatState.selectedKb}
+                </div>
+              )}
+            </div>
             <div className="max-w-4xl mx-auto relative">
               <input
                 ref={inputRef}

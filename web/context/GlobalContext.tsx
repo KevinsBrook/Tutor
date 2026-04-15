@@ -227,6 +227,9 @@ interface IdeaGenState {
 interface ChatSource {
   rag?: Array<{ kb_name: string; content: string }>;
   web?: Array<{ url: string; title?: string; snippet?: string }>;
+  direct_files?: Array<{
+    name?: string;
+  }>;
 }
 
 interface HomeChatMessage {

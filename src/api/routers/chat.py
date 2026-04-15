@@ -9,7 +9,15 @@ REST endpoints for session operations.
 from pathlib import Path
 import sys
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    UploadFile,
+    File,
+    Form,
+)
 
 _project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_project_root))
@@ -30,6 +38,50 @@ router = APIRouter()
 
 # Initialize session manager
 session_manager = SessionManager()
+async def _read_uploaded_file_text(file: UploadFile) -> str:
+    """
+    Read uploaded file and extract plain text for direct QA.
+    First version: support txt / md / csv / json / pdf.
+    """
+    filename = (file.filename or "").lower()
+
+    data = await file.read()
+
+    # text-like files
+    if filename.endswith((".txt", ".md", ".csv", ".json", ".py", ".js", ".ts", ".html", ".css")):
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                return data.decode("utf-8", errors="ignore")
+            except Exception:
+                return ""
+
+    # pdf files
+    if filename.endswith(".pdf"):
+        try:
+            import io
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(data))
+            texts = []
+            for page in reader.pages[:20]:  # first version: at most first 20 pages
+                page_text = page.extract_text() or ""
+                if page_text.strip():
+                    texts.append(page_text)
+            return "\n\n".join(texts)
+        except Exception:
+            return ""
+
+    # unsupported files for direct QA
+    return ""
+
+
+def _truncate_context(text: str, max_chars: int = 12000) -> str:
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n\n[内容过长，已截断]"
 
 
 # =============================================================================
@@ -294,3 +346,152 @@ async def websocket_chat(websocket: WebSocket):
             await websocket.send_json({"type": "error", "message": str(e)})
         except Exception:
             pass
+@router.post("/chat/with-files")
+async def chat_with_files(
+    message: str = Form(...),
+    files: list[UploadFile] = File(...),
+    session_id: str | None = Form(None),
+):
+    """
+    Direct QA based on files uploaded in this request.
+    This does NOT depend on KB indexing being finished.
+    """
+    try:
+        message = message.strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="Message is required")
+
+        if not files:
+            raise HTTPException(status_code=400, detail="At least one file is required")
+
+        # current UI language
+        language = get_ui_language(default=config.get("system", {}).get("language", "en"))
+
+        # read file contents
+        extracted_parts = []
+        file_names = []
+
+        for file in files:
+            file_names.append(file.filename or "unnamed_file")
+            text = await _read_uploaded_file_text(file)
+            text = _truncate_context(text, max_chars=8000)
+
+            if text.strip():
+                extracted_parts.append(
+                    f"【文件名】{file.filename or 'unnamed_file'}\n【文件内容】\n{text}"
+                )
+
+        if not extracted_parts:
+            raise HTTPException(
+                status_code=400,
+                detail="当前上传的文件暂时无法提取可用文本内容，请先尝试 txt / md / pdf 文件。",
+            )
+
+        combined_context = "\n\n".join(extracted_parts)
+
+        # get or create session
+        if session_id:
+            session = session_manager.get_session(session_id)
+            if not session:
+                session = session_manager.create_session(
+                    title=message[:50] + ("..." if len(message) > 50 else ""),
+                    settings={
+                        "mode": "direct_file_qa",
+                        "file_names": file_names,
+                    },
+                )
+                session_id = session["session_id"]
+        else:
+            session = session_manager.create_session(
+                title=message[:50] + ("..." if len(message) > 50 else ""),
+                settings={
+                    "mode": "direct_file_qa",
+                    "file_names": file_names,
+                },
+            )
+            session_id = session["session_id"]
+
+        # build history
+        history = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in session.get("messages", [])
+        ]
+
+        # save user message
+        session_manager.add_message(
+            session_id=session_id,
+            role="user",
+            content=message,
+        )
+
+        # init ChatAgent
+        try:
+            llm_config = get_llm_config()
+            api_key = llm_config.api_key
+            base_url = llm_config.base_url
+            api_version = getattr(llm_config, "api_version", None)
+        except Exception:
+            api_key = None
+            base_url = None
+            api_version = None
+
+        agent = ChatAgent(
+            language=language,
+            config=config,
+            api_key=api_key,
+            base_url=base_url,
+            api_version=api_version,
+        )
+
+        # build direct file QA prompt
+        direct_context_prompt = (
+            "你是一个中文学习助手。请严格依据用户本次上传文件的内容回答问题。\n"
+            "要求：\n"
+            "1. 优先依据文件内容回答，不要编造。\n"
+            "2. 如果文件中找不到答案，要明确说“在本次上传文件中没有找到相关信息”。\n"
+            "3. 如果有多个文件，必要时说明答案来自哪个文件。\n"
+            "4. 回答尽量清晰、简洁、有条理。\n\n"
+            f"【本次上传文件内容】\n{combined_context}\n\n"
+            f"【用户问题】\n{message}"
+        )
+
+        response = await agent.generate(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是一个严谨的中文文件问答助手。",
+                },
+                {
+                    "role": "user",
+                    "content": direct_context_prompt,
+                },
+            ]
+        )
+
+        # save assistant message
+        session_manager.add_message(
+            session_id=session_id,
+            role="assistant",
+            content=response,
+            sources={
+                "direct_files": [
+                    {"name": name} for name in file_names
+                ]
+            },
+        )
+
+        return {
+            "success": True,
+            "mode": "direct_file_qa",
+            "session_id": session_id,
+            "answer": response,
+            "sources": {
+                "direct_files": [{"name": name} for name in file_names]
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Direct file QA error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

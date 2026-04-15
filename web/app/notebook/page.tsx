@@ -1104,7 +1104,7 @@ export default function NotebookPage() {
                     思维导图
                   </h3>
                   <div className="rounded-xl border border-slate-100 dark:border-slate-600 bg-white dark:bg-slate-800 overflow-hidden">
-                    <div className="h-[420px]">
+                    <div className="h-[520px]">
                       <ReactFlow
                         nodes={mindmapFlow.nodes}
                         edges={mindmapFlow.edges}
