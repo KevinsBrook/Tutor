@@ -24,7 +24,9 @@ from src.logging import Logger, get_logger
 from src.services.config import load_config_with_main
 
 from .agents.generate_agent import GenerateAgent
+from .quality import build_question_audit, normalize_question_schema, normalize_question_type
 from .agents.relevance_analyzer import RelevanceAnalyzer
+from .repository import JsonQuestionRunRepository, QuestionRunRepository
 from .agents.retrieve_agent import RetrieveAgent
 
 
@@ -48,6 +50,7 @@ class AgentCoordinator:
         kb_name: str | None = None,
         output_dir: str | None = None,
         language: str = "en",
+        repository: QuestionRunRepository | None = None,
     ):
         """
         Initialize the coordinator.
@@ -64,6 +67,7 @@ class AgentCoordinator:
         self.kb_name = kb_name
         self.output_dir = output_dir
         self.language = language
+        self.repository = repository or JsonQuestionRunRepository()
 
         # Store API credentials for creating agents
         self._api_key = api_key
@@ -204,6 +208,7 @@ class AgentCoordinator:
             }
 
         knowledge_context = retrieval_result["summary"]
+        source_refs = self._build_source_refs(retrieval_result.get("retrievals", []))
 
         # Step 2: Generate question
         generate_agent = self._create_generate_agent()
@@ -224,7 +229,16 @@ class AgentCoordinator:
                 "error": gen_result.get("error", "Generation failed"),
             }
 
-        question = gen_result["question"]
+        raw_requested_type = str(requirement.get("question_type", "written") or "written").lower()
+        requested_type = (
+            "mixed" if raw_requested_type == "mixed" else normalize_question_type(raw_requested_type)
+        )
+        question = normalize_question_schema(
+            gen_result["question"],
+            requested_type=requested_type,
+            cognitive_level=requirement.get("cognitive_level", "understand"),
+        )
+        question["source_refs"] = source_refs
 
         # Step 3: Analyze relevance
         analyzer = self._create_relevance_analyzer()
@@ -244,6 +258,13 @@ class AgentCoordinator:
                 "relevance": analysis["relevance"],
                 "kb_coverage": analysis["kb_coverage"],
                 "extension_points": analysis.get("extension_points", ""),
+                "audit": build_question_audit(
+                    question=question,
+                    requested_difficulty=requirement.get("difficulty", "medium"),
+                    relevance=analysis["relevance"],
+                    kb_coverage=analysis["kb_coverage"],
+                    source_refs=source_refs,
+                ),
             },
             "rounds": 1,  # No iteration
         }
@@ -314,10 +335,14 @@ class AgentCoordinator:
 
         knowledge_context = retrieval_result["summary"]
         queries = retrieval_result["queries"]
+        source_refs = self._build_source_refs(retrieval_result.get("retrievals", []))
+
+        resolved_type = normalize_question_type(requirement.get("question_type", "written"))
+        cognitive_level = requirement.get("cognitive_level", "understand")
 
         # Save knowledge.json
         if batch_dir:
-            self._save_knowledge_json(batch_dir, retrieval_result)
+            self.repository.save_knowledge(batch_dir, retrieval_result)
 
         await self._send_ws_update("knowledge_saved", {"queries": queries})
 
@@ -334,7 +359,7 @@ class AgentCoordinator:
 
         # Save plan.json
         if batch_dir:
-            self._save_plan_json(batch_dir, plan)
+            self.repository.save_plan(batch_dir, plan)
 
         await self._send_ws_update("plan_ready", {"plan": plan, "focuses": focuses})
 
@@ -386,7 +411,12 @@ class AgentCoordinator:
                 )
                 continue
 
-            question = gen_result["question"]
+            question = normalize_question_schema(
+                gen_result["question"],
+                requested_type=normalize_question_type(focus.get("type", resolved_type)),
+                cognitive_level=cognitive_level,
+            )
+            question["source_refs"] = source_refs
 
             # Analyze relevance
             await self._send_ws_update(
@@ -404,6 +434,13 @@ class AgentCoordinator:
                 "relevance": analysis["relevance"],
                 "kb_coverage": analysis["kb_coverage"],
                 "extension_points": analysis.get("extension_points", ""),
+                "audit": build_question_audit(
+                    question=question,
+                    requested_difficulty=requirement.get("difficulty", "medium"),
+                    relevance=analysis["relevance"],
+                    kb_coverage=analysis["kb_coverage"],
+                    source_refs=source_refs,
+                ),
             }
 
             # Save result
@@ -416,7 +453,7 @@ class AgentCoordinator:
             }
 
             if batch_dir:
-                self._save_custom_question_result(batch_dir, result)
+                self.repository.save_question_result(batch_dir, result)
 
             results.append(result)
 
@@ -453,9 +490,7 @@ class AgentCoordinator:
         }
 
         if batch_dir:
-            summary_file = batch_dir / "summary.json"
-            with open(summary_file, "w", encoding="utf-8") as f:
-                json.dump(summary, f, indent=2, ensure_ascii=False)
+            self.repository.save_summary(batch_dir, summary)
             summary["output_dir"] = str(batch_dir)
 
         # Update token stats from shared LLMStats
@@ -503,6 +538,8 @@ class AgentCoordinator:
         from src.services.llm.config import get_llm_config
 
         llm_config = get_llm_config()
+        requested_type = normalize_question_type(requirement.get("question_type", "written"))
+        cognitive_level = requirement.get("cognitive_level", "understand")
 
         system_prompt = (
             "You are an educational content planner. Create distinct question focuses "
@@ -511,7 +548,9 @@ class AgentCoordinator:
             'Output JSON with key "focuses" containing an array of objects, each with:\n'
             '- "id": string like "q_1", "q_2"\n'
             '- "focus": string describing what aspect to test\n'
-            f'- "type": "{requirement.get("question_type", "written")}"'
+            '- "type": one of '
+            '["choice","written","true_false","multiple_choice","fill_blank","matching","term_definition","ordering"]\n'
+            '- "cognitive_level": one of ["remember","understand","apply","analyze","evaluate","create"]'
         )
 
         # Truncate knowledge context consistently (4000 chars across all agents)
@@ -523,7 +562,8 @@ class AgentCoordinator:
         user_prompt = (
             f"Topic: {requirement.get('knowledge_point', '')}\n"
             f"Difficulty: {requirement.get('difficulty', 'medium')}\n"
-            f"Question Type: {requirement.get('question_type', 'written')}\n"
+            f"Question Type: {requested_type}\n"
+            f"Bloom Level: {cognitive_level}\n"
             f"Number: {num_questions}\n\n"
             f"Knowledge:\n{truncated_knowledge}{truncation_suffix}\n\n"
             f"Generate exactly {num_questions} distinct focuses in JSON."
@@ -551,24 +591,63 @@ class AgentCoordinator:
             focuses = []
 
         # Fallback: create simple focuses
+        requested_types = requirement.get("question_types")
+        if not isinstance(requested_types, list):
+            requested_types = []
+        normalized_type_pool = [
+            normalize_question_type(x) for x in requested_types if isinstance(x, str)
+        ]
+        if not normalized_type_pool:
+            if requested_type == "mixed":
+                normalized_type_pool = ["choice", "written", "true_false", "fill_blank"]
+            else:
+                normalized_type_pool = [requested_type]
+
         if len(focuses) < num_questions:
-            question_type = requirement.get("question_type", "written")
             for i in range(len(focuses), num_questions):
+                selected_type = normalized_type_pool[i % len(normalized_type_pool)]
                 focuses.append(
                     {
                         "id": f"q_{i + 1}",
                         "focus": f"Aspect {i + 1} of {requirement.get('knowledge_point', 'topic')}",
-                        "type": question_type,
+                        "type": selected_type,
+                        "cognitive_level": cognitive_level,
                     }
                 )
+        else:
+            for idx, focus in enumerate(focuses):
+                focus["type"] = normalize_question_type(
+                    focus.get("type"), fallback=normalized_type_pool[idx % len(normalized_type_pool)]
+                )
+                focus["cognitive_level"] = focus.get("cognitive_level", cognitive_level)
 
         return {
             "knowledge_point": requirement.get("knowledge_point", ""),
             "difficulty": requirement.get("difficulty", "medium"),
-            "question_type": requirement.get("question_type", "written"),
+            "question_type": requested_type,
+            "cognitive_level": cognitive_level,
             "num_questions": num_questions,
             "focuses": focuses[:num_questions],
         }
+
+    def _build_source_refs(self, retrievals: list[dict[str, Any]]) -> list[dict[str, str]]:
+        refs: list[dict[str, str]] = []
+        for idx, item in enumerate(retrievals[:3]):
+            query = str(item.get("query", "")).strip()
+            answer = str(item.get("answer", "")).strip()
+            if not answer:
+                continue
+            snippet = answer.replace("\n", " ")
+            if len(snippet) > 180:
+                snippet = snippet[:180].rstrip() + "..."
+            refs.append(
+                {
+                    "id": f"ref_{idx + 1}",
+                    "query": query or f"检索片段 {idx + 1}",
+                    "snippet": snippet,
+                }
+            )
+        return refs
 
     def _save_question_result(
         self,

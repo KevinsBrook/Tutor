@@ -25,6 +25,7 @@ interface QuestionContextType {
     topic: string,
     diff: string,
     type: string,
+    bloomLevel: string,
     count: number,
     kb: string,
   ) => void;
@@ -235,7 +236,14 @@ export function QuestionProvider({ children }: { children: React.ReactNode }) {
   );
 
   const startQuestionGen = useCallback(
-    (topic: string, diff: string, type: string, count: number, kb: string) => {
+    (
+      topic: string,
+      diff: string,
+      type: string,
+      bloomLevel: string,
+      count: number,
+      kb: string,
+    ) => {
       if (questionWs.current) questionWs.current.close();
 
       setQuestionState((prev) => ({
@@ -247,6 +255,7 @@ export function QuestionProvider({ children }: { children: React.ReactNode }) {
         topic,
         difficulty: diff,
         type,
+        bloomLevel,
         count,
         selectedKb: kb,
         progress: {
@@ -271,6 +280,7 @@ export function QuestionProvider({ children }: { children: React.ReactNode }) {
               knowledge_point: topic,
               difficulty: diff,
               question_type: type,
+              cognitive_level: bloomLevel,
               additional_requirements: "Ensure clarity and academic rigor.",
             },
             count: count,

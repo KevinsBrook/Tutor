@@ -1,12 +1,15 @@
 import asyncio
 import base64
 from datetime import datetime
+import json
 from pathlib import Path
 import re
 import sys
 import traceback
+from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from src.agents.question import AgentCoordinator
 from src.api.utils.history import ActivityType, history_manager
@@ -22,6 +25,7 @@ sys.path.insert(0, str(project_root))
 
 from src.logging import get_logger
 from src.services.config import load_config_with_main
+from src.services.llm import complete as llm_complete
 from src.services.llm.config import get_llm_config
 from src.services.settings.interface_settings import get_ui_language
 
@@ -36,6 +40,122 @@ router = APIRouter()
 # Output directory for mimic mode - use data/user/question
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 MIMIC_OUTPUT_DIR = PROJECT_ROOT / "data" / "user" / "question" / "mimic_papers"
+
+
+class WrittenEvaluateRequest(BaseModel):
+    question: dict[str, Any]
+    answer: str
+
+
+def _normalize_words(text: str) -> set[str]:
+    zh_words = re.findall(r"[\u4e00-\u9fa5]{2,}", text)
+    en_words = re.findall(r"[a-zA-Z]{3,}", text.lower())
+    return set(zh_words + en_words)
+
+
+def _evaluate_written_answer(question: dict[str, Any], answer: str) -> dict[str, Any]:
+    answer = (answer or "").strip()
+    if not answer:
+        return {
+            "status": "incorrect",
+            "score_ratio": 0.0,
+            "reason": "未检测到有效作答内容，请补充关键观点后再提交。",
+        }
+
+    reference = "\n".join(
+        [
+            str(question.get("correct_answer", "")),
+            str(question.get("explanation", "")),
+            str(question.get("question", "")),
+        ]
+    )
+    ref_tokens = _normalize_words(reference)
+    ans_tokens = _normalize_words(answer)
+    overlap_ratio = len(ref_tokens & ans_tokens) / max(1, len(ref_tokens))
+    len_factor = min(1.0, len(answer) / 180)
+    score_ratio = max(0.0, min(1.0, 0.72 * overlap_ratio + 0.28 * len_factor))
+
+    if score_ratio >= 0.75:
+        status = "correct"
+        reason = "答案与参考要点高度一致，覆盖面较完整。"
+    elif score_ratio >= 0.45:
+        status = "partial"
+        reason = "答案覆盖了部分关键点，建议补充细节与依据。"
+    else:
+        status = "incorrect"
+        reason = "答案与题目关键要点匹配度较低，请围绕核心概念重答。"
+
+    return {"status": status, "score_ratio": round(score_ratio, 3), "reason": reason}
+
+
+async def _evaluate_written_answer_with_llm(question: dict[str, Any], answer: str) -> dict[str, Any]:
+    """LLM-first written grading. Falls back to heuristic grading when unavailable."""
+    answer = (answer or "").strip()
+    if not answer:
+        return {
+            "status": "incorrect",
+            "score_ratio": 0.0,
+            "reason": "未检测到有效作答内容，请补充关键观点后再提交。",
+            "source": "rule",
+        }
+
+    try:
+        llm_config = get_llm_config()
+        system_prompt = (
+            "你是一名严谨的助教，请根据题目、参考答案和学生作答进行评分。"
+            "只输出 JSON，不要输出 markdown。"
+            "字段必须包含 status(correct|partial|incorrect)、score_ratio(0-1)、reason(简短中文说明)。"
+        )
+        user_prompt = json.dumps(
+            {
+                "question": question.get("question", ""),
+                "reference_answer": question.get("correct_answer", ""),
+                "reference_explanation": question.get("explanation", ""),
+                "student_answer": answer,
+                "scoring_rule": "优先考察是否命中关键概念、论证是否完整、是否存在明显事实错误。",
+            },
+            ensure_ascii=False,
+        )
+        raw = await llm_complete(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            model=llm_config.model,
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
+            api_version=getattr(llm_config, "api_version", None),
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+        if isinstance(raw, dict):
+            data = raw
+        else:
+            data = json.loads(raw)
+        status = str(data.get("status", "partial")).lower()
+        if status not in {"correct", "partial", "incorrect"}:
+            status = "partial"
+        score_ratio = float(data.get("score_ratio", 0.5))
+        score_ratio = max(0.0, min(1.0, score_ratio))
+        reason = str(data.get("reason", "")).strip() or "已完成评分，但模型未返回详细理由。"
+        return {
+            "status": status,
+            "score_ratio": round(score_ratio, 3),
+            "reason": reason,
+            "source": "llm",
+        }
+    except Exception as exc:
+        logger.warning("LLM written grading failed, fallback to rule grading: %s", format_exception_message(exc))
+        fallback = _evaluate_written_answer(question, answer)
+        fallback["source"] = "rule"
+        return fallback
+
+
+@router.post("/evaluate/written")
+async def evaluate_written_submission(request: WrittenEvaluateRequest):
+    question_type = str(request.question.get("question_type", "")).lower()
+    if question_type and question_type not in {"written", "essay", "subjective"}:
+        raise HTTPException(status_code=400, detail="This endpoint is only for written questions")
+    result = await _evaluate_written_answer_with_llm(request.question, request.answer)
+    return {"success": True, **result}
 
 
 @router.websocket("/mimic")

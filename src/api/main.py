@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.api.routers import (
+    assignment_review,
     agent_config,
     chat,
     co_writer,
@@ -201,6 +202,11 @@ app.include_router(settings.router, prefix="/api/v1/settings", tags=["settings"]
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])
 app.include_router(config.router, prefix="/api/v1/config", tags=["config"])
 app.include_router(agent_config.router, prefix="/api/v1/agent-config", tags=["agent-config"])
+app.include_router(
+    assignment_review.router,
+    prefix="/api/v1/assignment-review",
+    tags=["assignment-review"],
+)
 
 
 @app.get("/")

@@ -268,6 +268,7 @@ interface GlobalContextType {
     topic: string,
     diff: string,
     type: string,
+    bloomLevel: string,
     count: number,
     kb: string,
   ) => void;
@@ -368,6 +369,7 @@ const DEFAULT_QUESTION_STATE: QuestionState = {
   topic: "",
   difficulty: "medium",
   type: "choice",
+  bloomLevel: "understand",
   count: 1,
   selectedKb: "",
   progress: {
@@ -949,6 +951,7 @@ export function GlobalProvider({ children }: { children: React.ReactNode }) {
     topic: string,
     diff: string,
     type: string,
+    bloomLevel: string,
     count: number,
     kb: string,
   ) => {
@@ -963,6 +966,7 @@ export function GlobalProvider({ children }: { children: React.ReactNode }) {
       topic,
       difficulty: diff,
       type,
+      bloomLevel,
       count,
       selectedKb: kb,
       progress: {
@@ -998,6 +1002,7 @@ export function GlobalProvider({ children }: { children: React.ReactNode }) {
             knowledge_point: topic,
             difficulty: diff,
             question_type: type,
+            cognitive_level: bloomLevel,
             additional_requirements: "Ensure clarity and academic rigor.",
           },
           count: count,
