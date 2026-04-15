@@ -4,8 +4,17 @@
  * Source references for chat messages
  */
 export interface ChatSource {
-  rag?: Array<{ kb_name: string; content: string }>;
-  web?: Array<{ url: string; title?: string; snippet?: string }>;
+  rag?: Array<{
+    kb_name: string;
+    content?: string;
+  }>;
+  web?: Array<{
+    title?: string;
+    url: string;
+  }>;
+  direct_files?: Array<{
+    name?: string;
+  }>;
 }
 
 /**

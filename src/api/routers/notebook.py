@@ -46,80 +46,165 @@ def build_note_prompt(
     generate_outline: bool,
     generate_mindmap: bool,
 ) -> str:
-    """Build LLM prompt for optional note generation."""
-
     tasks = []
-
     if generate_summary:
-        tasks.append("""
-1. summary：
-请总结整段对话内容，要求包括：
-- 主题
-- 核心问题
-- 关键结论
-- 重要知识点
-- 简要说明
-输出为结构化 JSON 对象。
-""")
-
+        tasks.append("1. 生成学习总结 summary")
     if generate_outline:
-        tasks.append("""
-2. outline：
-请将对话内容整理为结构化学习大纲。
-要求：
-- 分层清晰
-- 使用一级标题、二级标题、三级要点
-- 输出为 JSON 数组
-格式示例：
-[
-  {
-    "title": "一级标题",
-    "children": [
-      {
-        "title": "二级标题",
-        "children": []
-      }
-    ]
-  }
-]
-""")
-
+        tasks.append("2. 生成知识型大纲 outline")
     if generate_mindmap:
-        tasks.append("""
-3. mindmap：
-请将对话内容整理为思维导图结构。
-要求：
-- 输出为树形 JSON
-- 使用 topic 和 children 字段
-格式示例：
-{
-  "topic": "中心主题",
-  "children": [
-    {"topic": "分支1", "children": []},
-    {"topic": "分支2", "children": [
-      {"topic": "子分支", "children": []}
-    ]}
-  ]
-}
-""")
+        tasks.append("3. 生成知识型思维导图 mindmap")
 
     task_text = "\n".join(tasks)
 
     return f"""
-请根据下面的对话内容，按要求生成学习整理结果。
+你是一个中文学习笔记整理助手。请根据给定对话内容，输出结构化学习笔记。
+你的目标不是做空泛总结，而是把对话中的“知识问题、概念定义、区别比较、示例代码、应用场景”整理成适合学习和复习的笔记。
+你必须严格返回 JSON，不要输出任何解释、前言、后记、Markdown 代码块标记。
 
-输出要求：
-- 使用中文
-- 只输出 JSON
-- 不要输出任何 JSON 以外的解释文字
-- JSON 中只包含用户要求生成的字段
+【对话内容】
+{conversation_text}
 
-用户选择生成的内容：
+【任务】
 {task_text}
 
-对话内容：
-{conversation_text}
-"""
+【总体要求】
+1. 必须返回合法 JSON
+2. 顶层只允许包含以下字段：
+   - summary
+   - outline
+   - mindmap
+3. 不需要生成的字段可以省略
+4. 所有内容必须使用中文
+5. 内容必须具体，不能空泛，不能只写“主题”“问题”“说明”这种模板词
+6. 必须严格基于对话真实内容整理，不要编造对话中没有出现的大段内容
+7. 如果对话中包含多个问题，必须按知识主题拆开整理，而不是合并成一句笼统总结
+8. 如果对话中出现“定义、区别、例子、代码、数据集、步骤、应用场景”，要尽量在结构中体现出来
+9. 如果对话中同时包含“用户提问”和“助手寒暄/自我介绍”，必须优先整理“用户提问中涉及的知识主题”，不要把助手自我介绍作为主要内容
+10. 如果用户一次提了多个学习问题，必须优先按这些问题拆分知识模块
+11. 除非用户主要在询问系统功能，否则不要把“助手功能介绍、服务内容、交互方式”作为主大纲
+12. 本次整理的重点应放在用户想学习的知识，而不是对话礼貌性内容
+
+【知识提取优先级】
+请优先提取“用户问题中真正要学习的知识点”，优先级高于助手的寒暄、自我介绍和功能说明。
+
+例如：
+- 如果用户提问包含概念定义，应优先整理概念定义
+- 如果用户提问包含区别比较，应优先整理区别比较
+- 如果用户提问包含示例代码，应优先整理示例代码
+- 如果用户提问包含多个连续问题，应拆成多个知识模块
+- 如果助手回答里有自我介绍，而用户问题是课程知识，则笔记主结构必须围绕课程知识展开
+
+【summary 要求】
+- summary 必须是对象
+- 必须包含以下字段：
+  - 学习主题
+  - 核心问题
+  - 关键知识点
+  - 对比关系
+  - 示例与实践
+  - 适合复习的结论
+- 每个字段都必须是完整中文内容
+- “核心问题”要概括用户到底问了哪些知识点
+- “关键知识点”要提炼 3 到 6 个核心知识
+- “对比关系”要写出对话中涉及的区别、联系、比较
+- “示例与实践”要体现数据集、代码、例子、应用等内容
+- “适合复习的结论”要写成适合学生复习时直接阅读的总结
+
+【outline 要求】
+- outline 必须是数组
+- 每个节点格式必须为：
+  {{
+    "title": "节点标题",
+    "children": [子节点...]
+  }}
+- 大纲必须体现“知识结构”，不能只是把 summary 的字段名重复一遍
+- 一级节点应该优先按“真实知识主题”划分，例如：
+  - 机器学习的定义
+  - 监督学习、无监督学习、强化学习
+  - 分类与回归的区别
+  - 逻辑回归与线性回归的区别
+  - 鸢尾花数据集代码示例
+- 大纲至少 3 层
+- 一级节点至少 3 个
+- 每个一级节点至少 2 个二级节点
+- 如果对话内容足够，尽量扩展到三级节点
+- title 必须具体，不能只写“主题1”“总结”“说明”
+- 如果对话中本来就是连续多个问题，应尽量按“问题 -> 解释 -> 对比/例子”展开
+
+【mindmap 要求】
+- mindmap 必须是对象
+- 格式必须为：
+  {{
+    "topic": "中心主题",
+    "children": [
+      {{
+        "topic": "子主题",
+        "children": [...]
+      }}
+    ]
+  }}
+- 思维导图必须和 outline 对应，但更适合图形化展示
+- 中心主题应该是本次对话的总学习主题，而不是“对话内容总结”
+- 一级节点优先使用真实知识主题，例如：
+  - 机器学习基础
+  - 学习范式分类
+  - 分类与回归
+  - 逻辑回归 vs 线性回归
+  - 鸢尾花数据集示例
+- 每个一级节点至少 2 个子节点
+- 至少 3 层
+- topic 必须具体，不能空泛
+- 思维导图节点要尽量短，但要有知识含义，适合展示在节点框里
+
+【特别要求】
+- 如果对话里有多个连续提问，必须拆成多个知识模块
+- 如果对话里有“区别/对比”，要单独形成比较节点
+- 如果对话里有“代码/数据集/例子”，要单独形成示例节点
+- 不要把结果写成“用户与助手对话总结”
+- 不要把结果主要写成“助手做了什么”，而要写“知识内容是什么”
+
+【示例结构】
+{{
+  "summary": {{
+    "学习主题": "...",
+    "核心问题": "...",
+    "关键知识点": "...",
+    "对比关系": "...",
+    "示例与实践": "...",
+    "适合复习的结论": "..."
+  }},
+  "outline": [
+    {{
+      "title": "一级知识主题",
+      "children": [
+        {{
+          "title": "二级知识点",
+          "children": [
+            {{
+              "title": "三级展开点",
+              "children": []
+            }}
+          ]
+        }}
+      ]
+    }}
+  ],
+  "mindmap": {{
+    "topic": "总学习主题",
+    "children": [
+      {{
+        "topic": "一级知识模块",
+        "children": [
+          {{
+            "topic": "二级知识点",
+            "children": []
+          }}
+        ]
+      }}
+    ]
+  }}
+}}
+""".strip()
 #xinzengjieshu
 # === Request/Response Models ===
 
@@ -224,6 +309,10 @@ async def create_notebook(request: CreateNotebookRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/health")
+async def health_check():
+    """Health check"""
+    return {"status": "healthy", "service": "notebook"}
 
 @router.get("/{notebook_id}")
 async def get_notebook(notebook_id: str):
@@ -392,8 +481,18 @@ async def generate_from_chat(request: GenerateFromChatRequest):
             system_prompt="你是一个帮助学生整理学习内容的中文学习助手。请严格按照要求输出 JSON。",
         )
 
+        clean_text = result_text.strip()
+
+        if clean_text.startswith("```json"):
+            clean_text = clean_text[len("```json"):].strip()
+        elif clean_text.startswith("```"):
+            clean_text = clean_text[len("```"):].strip()
+
+        if clean_text.endswith("```"):
+            clean_text = clean_text[:-3].strip()
+
         try:
-            parsed = json.loads(result_text)
+            parsed = json.loads(clean_text)
         except Exception:
             parsed = {
                 "raw_result": result_text
@@ -415,7 +514,3 @@ async def generate_from_chat(request: GenerateFromChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/health")
-async def health_check():
-    """Health check"""
-    return {"status": "healthy", "service": "notebook"}
