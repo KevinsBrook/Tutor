@@ -12,6 +12,10 @@ __all__ = [
     "RAGAnythingPipeline",
     "RAGAnythingDoclingPipeline",
     "LightRAGPipeline",
+    "LightRAGV1Pipeline",
+    "LightRAGV2Pipeline",
+    "LightRAGV3Pipeline",
+    "LightRAGV4Pipeline",
 ]
 
 # NOTE:
@@ -23,6 +27,22 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     if name == "LightRAGPipeline":
         from .lightrag import LightRAGPipeline
+
+        return LightRAGPipeline
+    if name == "LightRAGV1Pipeline":
+        from .lightrag_v1 import LightRAGPipeline
+
+        return LightRAGPipeline
+    if name == "LightRAGV2Pipeline":
+        from .lightrag_v2 import LightRAGPipeline
+
+        return LightRAGPipeline
+    if name == "LightRAGV3Pipeline":
+        from .lightrag_v3 import LightRAGPipeline
+
+        return LightRAGPipeline
+    if name == "LightRAGV4Pipeline":
+        from .lightrag_v4 import LightRAGPipeline
 
         return LightRAGPipeline
     if name == "RAGAnythingPipeline":

@@ -300,11 +300,11 @@ class FileTypeRouter:
         # Base text extensions supported by all providers
         text_extensions = cls.TEXT_EXTENSIONS.copy()
 
-        if provider == "llamaindex":
+        if provider.startswith("llamaindex"):
             # LlamaIndex: PDF + all text files (reads any text file directly)
             return cls.MINERU_EXTENSIONS | text_extensions
 
-        elif provider == "lightrag":
+        elif provider in ("lightrag", "lightrag_v1", "lightrag_v2", "lightrag_v3", "lightrag_v4"):
             # LightRAG: PDF + all text files (uses FileTypeRouter)
             return cls.MINERU_EXTENSIONS | text_extensions
 
