@@ -46,80 +46,118 @@ def build_note_prompt(
     generate_outline: bool,
     generate_mindmap: bool,
 ) -> str:
-    """Build LLM prompt for optional note generation."""
-
     tasks = []
-
     if generate_summary:
-        tasks.append("""
-1. summary：
-请总结整段对话内容，要求包括：
-- 主题
-- 核心问题
-- 关键结论
-- 重要知识点
-- 简要说明
-输出为结构化 JSON 对象。
-""")
-
+        tasks.append("1. 生成详细总结 summary")
     if generate_outline:
-        tasks.append("""
-2. outline：
-请将对话内容整理为结构化学习大纲。
-要求：
-- 分层清晰
-- 使用一级标题、二级标题、三级要点
-- 输出为 JSON 数组
-格式示例：
-[
-  {
-    "title": "一级标题",
-    "children": [
-      {
-        "title": "二级标题",
-        "children": []
-      }
-    ]
-  }
-]
-""")
-
+        tasks.append("2. 生成详细大纲 outline")
     if generate_mindmap:
-        tasks.append("""
-3. mindmap：
-请将对话内容整理为思维导图结构。
-要求：
-- 输出为树形 JSON
-- 使用 topic 和 children 字段
-格式示例：
-{
-  "topic": "中心主题",
-  "children": [
-    {"topic": "分支1", "children": []},
-    {"topic": "分支2", "children": [
-      {"topic": "子分支", "children": []}
-    ]}
-  ]
-}
-""")
+        tasks.append("3. 生成详细思维导图 mindmap")
 
     task_text = "\n".join(tasks)
 
     return f"""
-请根据下面的对话内容，按要求生成学习整理结果。
+你是一个中文学习笔记整理助手。请根据给定对话内容，输出结构化学习笔记。
+你必须严格返回 JSON，不要输出任何解释、前言、后记、Markdown 代码块标记。
 
-输出要求：
-- 使用中文
-- 只输出 JSON
-- 不要输出任何 JSON 以外的解释文字
-- JSON 中只包含用户要求生成的字段
+【对话内容】
+{conversation_text}
 
-用户选择生成的内容：
+【任务】
 {task_text}
 
-对话内容：
-{conversation_text}
-"""
+【输出要求】
+1. 必须返回合法 JSON
+2. 顶层只允许包含以下字段：
+   - summary
+   - outline
+   - mindmap
+3. 不需要生成的字段可以省略
+4. 所有内容必须使用中文
+5. 内容必须具体，不能只写笼统标题
+6. 必须结合对话中的真实信息，不要凭空扩展无关内容
+
+【summary 要求】
+- summary 必须是一个对象
+- 至少包含以下字段：
+  - 主题
+  - 核心问题
+  - 关键结论
+  - 重要知识点
+  - 简要说明
+- 每个字段都必须有具体内容，不能只写几个字
+
+【outline 要求】
+- outline 必须是数组
+- 每个节点格式必须为：
+  {{
+    "title": "节点标题",
+    "children": [子节点...]
+  }}
+- 大纲至少 3 层
+- 一级节点至少 2 个
+- 每个一级节点至少 2 个二级节点
+- 如果内容允许，尽量扩展到三级节点
+- title 必须具体，如“逻辑回归与线性回归的区别”，不要只写“区别”
+
+【mindmap 要求】
+- mindmap 必须是对象
+- 格式必须为：
+  {{
+    "topic": "中心主题",
+    "children": [
+      {{
+        "topic": "子主题",
+        "children": [...]
+      }}
+    ]
+  }}
+- 思维导图至少 3 层
+- 根节点至少 2 个子节点
+- 每个一级子节点至少 2 个二级子节点
+- topic 必须具体，不要空泛
+
+【示例结构】
+{{
+  "summary": {{
+    "主题": "...",
+    "核心问题": "...",
+    "关键结论": "...",
+    "重要知识点": "...",
+    "简要说明": "..."
+  }},
+  "outline": [
+    {{
+      "title": "一级主题",
+      "children": [
+        {{
+          "title": "二级主题",
+          "children": [
+            {{
+              "title": "三级主题",
+              "children": []
+            }}
+          ]
+        }}
+      ]
+    }}
+  ],
+  "mindmap": {{
+    "topic": "中心主题",
+    "children": [
+      {{
+        "topic": "一级节点",
+        "children": [
+          {{
+            "topic": "二级节点",
+            "children": []
+          }}
+        ]
+      }}
+    ]
+  }}
+}}
+""".strip()
 #xinzengjieshu
 # === Request/Response Models ===
 
@@ -224,6 +262,10 @@ async def create_notebook(request: CreateNotebookRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/health")
+async def health_check():
+    """Health check"""
+    return {"status": "healthy", "service": "notebook"}
 
 @router.get("/{notebook_id}")
 async def get_notebook(notebook_id: str):
@@ -415,7 +457,3 @@ async def generate_from_chat(request: GenerateFromChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/health")
-async def health_check():
-    """Health check"""
-    return {"status": "healthy", "service": "notebook"}

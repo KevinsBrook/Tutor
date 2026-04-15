@@ -14,21 +14,24 @@ import {
   PenTool,
   ChevronRight,
   ChevronLeft,
-  ArrowRight,
   X,
   Check,
-  Palette,
-  MoreVertical,
   FolderOpen,
   Database,
-  Maximize2,
-  Minimize2,
   Download,
-  History,
-  Import,
   Upload,
   MessageSquare,
+  Loader2
 } from "lucide-react";
+import ReactFlow, {
+  Background,
+  Controls,
+  MiniMap,
+  Node,
+  Edge,
+  Position,
+} from "reactflow";
+import "reactflow/dist/style.css";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -36,7 +39,6 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { apiUrl } from "@/lib/api";
 import { processLatexContent } from "@/lib/latex";
-import { useGlobal } from "@/context/GlobalContext";
 import { useTranslation } from "react-i18next";
 
 interface NotebookRecord {
@@ -138,6 +140,8 @@ const getRecordColor = (type: string) => {
 
 export default function NotebookPage() {
   const { t } = useTranslation();
+  const [regenerateLoading, setRegenerateLoading] = useState(false);
+  const [regeneratedData, setRegeneratedData] = useState<any>(null);
   const [notebooks, setNotebooks] = useState<NotebookSummary[]>([]);
   const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(
     null,
@@ -173,8 +177,6 @@ export default function NotebookPage() {
     color: string;
   } | null>(null);
 
-  // Layout state for expandable detail panel (deprecated, using rightCollapsed instead)
-  const [detailExpanded, setDetailExpanded] = useState(false);
 
   // Import modal state
   const [showImportModal, setShowImportModal] = useState(false);
@@ -194,6 +196,9 @@ export default function NotebookPage() {
   useEffect(() => {
     fetchNotebooks();
   }, []);
+  useEffect(() => {
+    setRegeneratedData(null);
+  }, [selectedRecord?.id]);
 
   const fetchNotebooks = async () => {
     try {
@@ -428,11 +433,12 @@ export default function NotebookPage() {
 
       // Add each record to current notebook
       for (const record of recordsToImport) {
-        await fetch(apiUrl(`/api/v1/notebook/${selectedNotebook.id}/records`), {
+        await fetch(apiUrl("/api/v1/notebook/add_record"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            type: record.type,
+            notebook_ids: [selectedNotebook.id],
+            record_type: record.type,
             title: `[Imported] ${record.title}`,
             user_query: record.user_query,
             output: record.output,
@@ -440,6 +446,7 @@ export default function NotebookPage() {
               ...record.metadata,
               imported_from: importSourceNotebook,
             },
+            kb_name: record.kb_name || null,
           }),
         });
       }
@@ -456,13 +463,193 @@ export default function NotebookPage() {
       setLoadingImport(false);
     }
   };
+  const handleRegenerateNote = async () => {
+    if (!selectedRecord) return;
+  
+    const sessionId = selectedRecord.metadata?.session_id;
+    if (!sessionId) {
+      alert("当前记录没有 session_id，无法重新整理。");
+      return;
+    }
+  
+    try {
+      setRegenerateLoading(true);
+  
+      const res = await fetch(apiUrl("/api/v1/notebook/generate-from-chat"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          generate_summary: true,
+          generate_outline: true,
+          generate_mindmap: true,
+        }),
+      });
+  
+      const data = await res.json();
+  
+      if (!res.ok) {
+        throw new Error(data.detail || "重新整理失败");
+      }
+  
+      setRegeneratedData(data.result);
+    } catch (err: any) {
+      console.error("Failed to regenerate note:", err);
+      alert(err.message || "重新整理失败");
+    } finally {
+      setRegenerateLoading(false);
+    }
+  };
+  const renderSummary = (summary: any) => {
+    if (!summary) return null;
+  
+    if (typeof summary === "string") {
+      return <p className="text-slate-700 dark:text-slate-200">{summary}</p>;
+    }
+  
+    return (
+      <div className="space-y-3">
+        {Object.entries(summary).map(([key, value], idx) => (
+          <div key={`${key}-${idx}`}>
+            <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+              {key}
+            </div>
+            <div className="text-sm text-slate-700 dark:text-slate-200 leading-6">
+              {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+  
+  const renderOutlineTree = (items: any[], level = 0) => {
+    if (!Array.isArray(items) || items.length === 0) return null;
+  
+    return (
+      <ul className={level === 0 ? "space-y-2" : "space-y-1"} style={{ marginLeft: `${level * 16}px` }}>
+        {items.map((item, idx) => (
+          <li key={`${item?.title || "item"}-${idx}`} className="text-sm text-slate-700 dark:text-slate-200">
+            <div className="flex items-start gap-2">
+              <span className="mt-1 text-slate-400">•</span>
+              <div>
+                <div className="font-medium">{item?.title || "未命名节点"}</div>
+                {Array.isArray(item?.children) && item.children.length > 0 && (
+                  <div className="mt-1">{renderOutlineTree(item.children, level + 1)}</div>
+                )}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
+  };
+  
+  const renderMindmapTree = (node: any, level = 0) => {
+    if (!node) return null;
+  
+    return (
+      <div className={`${level > 0 ? "ml-6 mt-2" : ""}`}>
+        <div className="flex items-start gap-2">
+          <span className="mt-1 text-cyan-500">•</span>
+          <div>
+            <div className={`text-sm ${level === 0 ? "font-semibold text-slate-900 dark:text-slate-100" : "text-slate-700 dark:text-slate-200"}`}>
+              {node?.topic || "未命名主题"}
+            </div>
+            {Array.isArray(node?.children) && node.children.length > 0 && (
+              <div className="mt-1 space-y-1">
+                {node.children.map((child: any, idx: number) => (
+                  <div key={`${child?.topic || "node"}-${idx}`}>
+                    {renderMindmapTree(child, level + 1)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+  const buildMindmapFlow = (mindmap: any) => {
+    const nodes: Node[] = [];
+    const edges: Edge[] = [];
+  
+    if (!mindmap) {
+      return { nodes, edges };
+    }
+  
+    let nodeIndex = 0;
+    const levelXGap = 220;
+    const nodeYGap = 100;
+  
+    const traverse = (
+      node: any,
+      depth: number,
+      y: number,
+      parentId?: string,
+    ): number => {
+      const id = `node-${nodeIndex++}`;
+      const label = node?.topic || "未命名主题";
+  
+      nodes.push({
+        id,
+        data: { label },
+        position: { x: depth * levelXGap, y },
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
+        style: {
+          borderRadius: 12,
+          padding: 10,
+          border: "1px solid #cbd5e1",
+          background: "#ffffff",
+          color: "#0f172a",
+          fontSize: 13,
+          minWidth: 120,
+          textAlign: "center",
+        },
+      });
+  
+      if (parentId) {
+        edges.push({
+          id: `edge-${parentId}-${id}`,
+          source: parentId,
+          target: id,
+          type: "smoothstep",
+        });
+      }
+  
+      const children = Array.isArray(node?.children) ? node.children : [];
+      if (children.length === 0) {
+        return y + nodeYGap;
+      }
+  
+      let currentY = y;
+      for (const child of children) {
+        currentY = traverse(child, depth + 1, currentY, id);
+      }
+  
+      return currentY;
+    };
+  
+    traverse(mindmap, 0, 0);
+  
+    return { nodes, edges };
+  };
 
   const filteredNotebooks = notebooks.filter(
     (nb) =>
       nb.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       nb.description.toLowerCase().includes(searchTerm.toLowerCase()),
   );
-
+  const generatedSummary =
+    regeneratedData?.summary ?? selectedRecord?.metadata?.generated_summary;
+  const generatedOutline =
+    regeneratedData?.outline ?? selectedRecord?.metadata?.generated_outline;
+  const generatedMindmap =
+    regeneratedData?.mindmap ?? selectedRecord?.metadata?.generated_mindmap;
+  const mindmapFlow = generatedMindmap ? buildMindmapFlow(generatedMindmap) : { nodes: [], edges: [] };
   return (
     <div
       className="h-[calc(100vh-7rem)] min-h-0 flex gap-4 p-3 animate-fade-in rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/72 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur"
@@ -829,6 +1016,19 @@ export default function NotebookPage() {
             {selectedRecord && (
               <div className="flex items-center gap-2 shrink-0">
                 <button
+                  onClick={handleRegenerateNote}
+                  disabled={regenerateLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 rounded-lg transition-colors disabled:opacity-50"
+                  title="重新整理当前笔记"
+                >
+                 {regenerateLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                 ) : (
+                  <PenTool className="w-3.5 h-3.5" />
+                 )}
+                 重新整理
+                </button>
+                <button
                   onClick={exportAsMarkdown}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
                   title={t("Export as Markdown")}
@@ -873,36 +1073,99 @@ export default function NotebookPage() {
                 </div>
               </div>
 
-              {/* Output */}
-              <div>
-                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
-                  {t("Output")}
-                </h3>
-                <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-600">
-                  <div className="prose prose-slate dark:prose-invert max-w-none prose-sm">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm, remarkMath]}
-                      rehypePlugins={[rehypeKatex]}
-                    >
-                      {processLatexContent(selectedRecord.output)}
-                    </ReactMarkdown>
+              {/* Summary */}
+              {generatedSummary && (
+                <div className="mb-6">
+                  <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
+                    总结
+                  </h3>
+                  <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-600">
+                    {renderSummary(generatedSummary)}
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* Outline */}
+              {generatedOutline && (
+                <div className="mb-6">
+                  <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
+                    大纲
+                  </h3>
+                  <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-600">
+                    {renderOutlineTree(generatedOutline)}
+                  </div>
+                </div>
+              )}
+
+              {/* Mindmap */}
+              {generatedMindmap && (
+                <div className="mb-6">
+                  <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
+                    思维导图
+                  </h3>
+                  <div className="rounded-xl border border-slate-100 dark:border-slate-600 bg-white dark:bg-slate-800 overflow-hidden">
+                    <div className="h-[420px]">
+                      <ReactFlow
+                        nodes={mindmapFlow.nodes}
+                        edges={mindmapFlow.edges}
+                        fitView
+                        nodesDraggable={false}
+                        nodesConnectable={false}
+                        elementsSelectable={true}
+                        panOnDrag
+                        zoomOnScroll
+                      >
+                        <MiniMap />
+                        <Controls />
+                        <Background gap={16} size={1} />
+                      </ReactFlow>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Raw Output fallback */}
+              {!generatedSummary && !generatedOutline && !generatedMindmap && (
+                <div>
+                  <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
+                    {t("Output")}
+                  </h3>
+                  <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-600">
+                    <div className="prose prose-slate dark:prose-invert max-w-none prose-sm">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeKatex]}
+                      >
+                        {processLatexContent(selectedRecord.output)}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Metadata */}
-              {Object.keys(selectedRecord.metadata).length > 0 && (
+              {Object.keys(selectedRecord.metadata || {}).length > 0 && (
                 <div className="mt-6">
                   <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
                     {t("Metadata")}
                   </h3>
                   <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-600">
-                    <pre className="text-xs text-slate-600 dark:text-slate-300 overflow-x-auto">
-                      {JSON.stringify(selectedRecord.metadata, null, 2)}
-                    </pre>
-                  </div>
+                    <pre className="text-xs text-slate-600 dark:text-slate-300 overflow-x-auto whitespace-pre-wrap">
+                      {JSON.stringify(
+                        {
+                          source_type: selectedRecord.metadata?.source_type,
+                          session_id: selectedRecord.metadata?.session_id,
+                          message_count: selectedRecord.metadata?.message_count,
+                          enable_rag: selectedRecord.metadata?.enable_rag,
+                          enable_web_search: selectedRecord.metadata?.enable_web_search,
+                        },
+                      null,
+                      2,
+                    )}
+                  </pre>
                 </div>
-              )}
+              </div>
+            )}
             </div>
           </>
         ) : (
