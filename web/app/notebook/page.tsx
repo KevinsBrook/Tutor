@@ -143,6 +143,7 @@ export default function NotebookPage() {
   const [regenerateLoading, setRegenerateLoading] = useState(false);
   const [regeneratedData, setRegeneratedData] = useState<any>(null);
   const [notebooks, setNotebooks] = useState<NotebookSummary[]>([]);
+  
   const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(
     null,
   );
@@ -180,6 +181,10 @@ export default function NotebookPage() {
 
   // Import modal state
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showKbGenerateModal, setShowKbGenerateModal] = useState(false);
+  const [kbGenerateLoading, setKbGenerateLoading] = useState(false);
+  const [knowledgeBases, setKnowledgeBases] = useState<any[]>([]);
+  const [selectedKbForGenerate, setSelectedKbForGenerate] = useState("");
   const [availableNotebooks, setAvailableNotebooks] = useState<
     NotebookSummary[]
   >([]);
@@ -461,6 +466,120 @@ export default function NotebookPage() {
       console.error("Failed to import records:", err);
     } finally {
       setLoadingImport(false);
+    }
+  };
+  const openKbGenerateModal = async () => {
+    if (!selectedNotebook) {
+      alert("请先选择一个 Notebook");
+      return;
+    }
+  
+    try {
+      const res = await fetch(apiUrl("/api/v1/knowledge/list"));
+      const data = await res.json();
+      const kbList = Array.isArray(data) ? data : [];
+      setKnowledgeBases(kbList);
+  
+      if (kbList.length > 0) {
+        setSelectedKbForGenerate(kbList[0].name);
+      } else {
+        setSelectedKbForGenerate("");
+      }
+  
+      setShowKbGenerateModal(true);
+    } catch (err) {
+      console.error("Failed to fetch knowledge bases:", err);
+      alert("获取知识库列表失败");
+    }
+  };
+  const handleGenerateFromKbToCurrentNotebook = async () => {
+    if (!selectedNotebook) {
+      alert("请先选择一个 Notebook");
+      return;
+    }
+  
+    if (!selectedKbForGenerate) {
+      alert("请先选择一个知识库");
+      return;
+    }
+  
+    try {
+      setKbGenerateLoading(true);
+  
+      const res = await fetch(apiUrl("/api/v1/notebook/generate-from-kb"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kb_name: selectedKbForGenerate,
+          generate_summary: true,
+          generate_outline: true,
+          generate_mindmap: true,
+          max_chunks: 10,
+        }),
+      });
+  
+      const data = await res.json();
+  
+      if (!res.ok) {
+        throw new Error(data.detail || "从知识库生成笔记失败");
+      }
+  
+      const result = data.result || {};
+  
+      const summaryPart = result.summary
+        ? `## 总结\n\n${
+            typeof result.summary === "string"
+              ? result.summary
+              : JSON.stringify(result.summary, null, 2)
+          }`
+        : "";
+  
+      const outlinePart = result.outline
+        ? `## 大纲\n\n\`\`\`json\n${JSON.stringify(result.outline, null, 2)}\n\`\`\``
+        : "";
+  
+      const mindmapPart = result.mindmap
+        ? `## 思维导图\n\n\`\`\`json\n${JSON.stringify(result.mindmap, null, 2)}\n\`\`\``
+        : "";
+  
+      const addRes = await fetch(apiUrl("/api/v1/notebook/add_record"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          notebook_ids: [selectedNotebook.id],
+          record_type: "research",
+          title: `[KB Generated] ${selectedKbForGenerate}`,
+          user_query: `基于知识库 ${selectedKbForGenerate} 自动生成的学习笔记`,
+          output: [summaryPart, outlinePart, mindmapPart].filter(Boolean).join("\n\n---\n\n"),
+          metadata: {
+            source_type: "knowledge_base_generated_note",
+            kb_name: selectedKbForGenerate,
+            generated_summary: result.summary || null,
+            generated_outline: result.outline || null,
+            generated_mindmap: result.mindmap || null,
+          },
+          kb_name: selectedKbForGenerate,
+        }),
+      });
+  
+      const addData = await addRes.json();
+  
+      if (!addRes.ok) {
+        throw new Error(addData.detail || "保存到 Notebook 失败");
+      }
+  
+      await fetchNotebookDetail(selectedNotebook.id);
+      setShowKbGenerateModal(false);
+      alert("已成功从知识库生成笔记并保存到当前 Notebook");
+    } catch (err: any) {
+      console.error("Failed to generate from KB:", err);
+      alert(err.message || "从知识库生成笔记失败");
+    } finally {
+      setKbGenerateLoading(false);
     }
   };
   const handleRegenerateNote = async () => {
@@ -852,13 +971,24 @@ export default function NotebookPage() {
             ) : (
               <div className="flex-1" />
             )}
-            <button
-              onClick={() => setMiddleCollapsed(true)}
-              className="p-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-600 transition-all shrink-0"
-              title={t("Collapse middle panel")}
-            >
-              <ChevronLeft className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {selectedNotebook && (
+                <button
+                  onClick={openKbGenerateModal}
+                  className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all text-xs font-medium"
+                  title="从知识库生成笔记"
+                >
+                  从知识库生成笔记
+                </button>
+              )}
+              <button
+                onClick={() => setMiddleCollapsed(true)}
+                className="p-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-600 transition-all"
+                title={t("Collapse middle panel")}
+              >
+                <ChevronLeft className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1602,6 +1732,65 @@ export default function NotebookPage() {
           </div>
         </div>
       )}
+      {showKbGenerateModal && (
+        <div className="fixed inset-0 bg-slate-950/35 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in">
+          <div className="w-[480px] max-w-[92vw] rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/96 shadow-2xl dark:border-slate-700 dark:bg-slate-900/92 animate-in zoom-in-95">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 dark:text-slate-100">
+                从知识库生成笔记
+              </h3>
+              <button
+                onClick={() => setShowKbGenerateModal(false)}
+                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+              >
+                <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
+              </button>
+           </div>
+
+           <div className="p-6 space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
+                选择知识库
+              </label>
+              <select
+                value={selectedKbForGenerate}
+                onChange={(e) => setSelectedKbForGenerate(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-xl outline-none"
+              >
+                {knowledgeBases.map((kb) => (
+                  <option key={kb.name} value={kb.name}>
+                    {kb.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="text-sm text-slate-500 dark:text-slate-400">
+              生成结果将直接保存到当前 Notebook：
+              <span className="font-medium text-slate-700 dark:text-slate-200 ml-1">
+                {selectedNotebook?.name}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-4 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">
+            <button
+              onClick={() => setShowKbGenerateModal(false)}
+              className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleGenerateFromKbToCurrentNotebook}
+              disabled={kbGenerateLoading || !selectedKbForGenerate}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+            >
+              {kbGenerateLoading ? "生成中..." : "开始生成"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   );
 }

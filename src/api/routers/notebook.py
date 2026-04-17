@@ -5,7 +5,7 @@ Provides notebook creation, querying, updating, deletion, and record management 
 
 from pathlib import Path
 import sys
-from typing import Literal
+from typing import Literal,Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -206,6 +206,180 @@ def build_note_prompt(
 }}
 """.strip()
 #xinzengjieshu
+def build_kb_note_prompt(
+    kb_name: str,
+    kb_text: str,
+    generate_summary: bool,
+    generate_outline: bool,
+    generate_mindmap: bool,
+) -> str:
+    tasks = []
+    if generate_summary:
+        tasks.append("1. 生成知识库学习总结 summary")
+    if generate_outline:
+        tasks.append("2. 生成知识库知识型大纲 outline")
+    if generate_mindmap:
+        tasks.append("3. 生成知识库知识型思维导图 mindmap")
+
+    task_text = "\n".join(tasks)
+
+    return f"""
+你是一个中文学习笔记整理助手。请根据给定知识库内容，输出结构化学习笔记。
+你的目标不是做空泛总结，而是把知识库中的“概念定义、章节主题、区别比较、关键知识点、示例与应用场景”整理成适合学习和复习的笔记。
+你必须严格返回 JSON，不要输出任何解释、前言、后记、Markdown 代码块标记。
+
+【知识库名称】
+{kb_name}
+
+【知识库内容】
+{kb_text}
+
+【任务】
+{task_text}
+
+【总体要求】
+1. 必须返回合法 JSON
+2. 顶层只允许包含以下字段：
+   - summary
+   - outline
+   - mindmap
+3. 不需要生成的字段可以省略
+4. 所有内容必须使用中文
+5. 内容必须具体，不能空泛，不能只写“主题”“问题”“说明”这种模板词
+6. 必须严格基于给定知识库内容整理，不要编造知识库中没有出现的大段内容
+7. 如果知识库内容覆盖多个主题，必须按知识主题拆开整理，而不是合并成一句笼统总结
+8. 要优先提炼知识点、概念关系、章节层级、比较关系、示例与应用
+
+【summary 要求】
+- summary 必须是对象
+- 必须包含以下字段：
+  - 学习主题
+  - 核心内容
+  - 关键知识点
+  - 对比关系
+  - 示例与应用
+  - 适合复习的结论
+
+【outline 要求】
+- outline 必须是数组
+- 每个节点格式必须为：
+  {{
+    "title": "节点标题",
+    "children": [子节点...]
+  }}
+- 大纲必须体现“知识结构”
+- 一级节点优先按真实知识主题划分
+- 大纲至少 3 层
+- 一级节点至少 3 个
+- 每个一级节点至少 2 个二级节点
+- title 必须具体，不能只写“主题1”“总结”“说明”
+
+【mindmap 要求】
+- mindmap 必须是对象
+- 格式必须为：
+  {{
+    "topic": "中心主题",
+    "children": [
+      {{
+        "topic": "子主题",
+        "children": [...]
+      }}
+    ]
+  }}
+- 思维导图必须和 outline 对应，但更适合图形化展示
+- 中心主题应该是知识库总学习主题，而不是“知识库内容总结”
+- 一级节点优先使用真实知识主题
+- 每个一级节点至少 2 个子节点
+- 至少 3 层
+- topic 必须具体，不能空泛
+
+【示例结构】
+{{
+  "summary": {{
+    "学习主题": "...",
+    "核心内容": "...",
+    "关键知识点": "...",
+    "对比关系": "...",
+    "示例与应用": "...",
+    "适合复习的结论": "..."
+  }},
+  "outline": [
+    {{
+      "title": "一级知识主题",
+      "children": [
+        {{
+          "title": "二级知识点",
+          "children": [
+            {{
+              "title": "三级展开点",
+              "children": []
+            }}
+          ]
+        }}
+      ]
+    }}
+  ],
+  "mindmap": {{
+    "topic": "总学习主题",
+    "children": [
+      {{
+        "topic": "一级知识模块",
+        "children": [
+          {{
+            "topic": "二级知识点",
+            "children": []
+          }}
+        ]
+      }}
+    ]
+  }}
+}}
+""".strip()
+
+
+def collect_kb_text(kb_name: str, max_chunks: int = 15) -> str:
+    """
+    Collect representative text from a KB for note generation.
+    First version: read from rag_storage/kv_store_text_chunks.json
+    """
+    project_root = Path(__file__).parent.parent.parent.parent
+    kb_dir = project_root / "data" / "knowledge_bases" / kb_name
+    rag_storage_dir = kb_dir / "rag_storage"
+    text_chunks_file = rag_storage_dir / "kv_store_text_chunks.json"
+
+    if not text_chunks_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"知识库 {kb_name} 还没有可用的文本索引，请先完成知识库处理",
+        )
+
+    try:
+        with open(text_chunks_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取知识库文本块失败：{e}")
+
+    if not isinstance(data, dict) or not data:
+        raise HTTPException(status_code=400, detail="知识库中没有可用文本块")
+
+    chunks: list[str] = []
+
+    for _, value in data.items():
+        if not isinstance(value, dict):
+            continue
+        content = str(value.get("content", "")).strip()
+        if content:
+            chunks.append(content)
+        if len(chunks) >= max_chunks:
+            break
+
+    if not chunks:
+        raise HTTPException(status_code=400, detail="知识库中没有可用于整理的文本内容")
+
+    combined = "\n\n".join(chunks)
+    if len(combined) > 15000:
+        combined = combined[:15000] + "\n\n[知识库内容过长，已截断]"
+    return combined
 # === Request/Response Models ===
 
 
@@ -252,7 +426,14 @@ class GenerateFromChatRequest(BaseModel):
     generate_outline: bool = False
     generate_mindmap: bool = False
 #xinzengjieshu
+class GenerateFromKbRequest(BaseModel):
+    """Generate notebook content from a knowledge base"""
 
+    kb_name: str
+    generate_summary: bool = False
+    generate_outline: bool = False
+    generate_mindmap: bool = False
+    max_chunks: int = 15
 
 # === API Endpoints ===
 
@@ -501,6 +682,71 @@ async def generate_from_chat(request: GenerateFromChatRequest):
         return {
             "success": True,
             "session_id": request.session_id,
+            "generated": {
+                "summary": request.generate_summary,
+                "outline": request.generate_outline,
+                "mindmap": request.generate_mindmap,
+            },
+            "result": parsed,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@router.post("/generate-from-kb")
+async def generate_from_kb(request: GenerateFromKbRequest):
+    """
+    Generate summary / outline / mindmap from a knowledge base.
+    """
+    if not (
+        request.generate_summary
+        or request.generate_outline
+        or request.generate_mindmap
+    ):
+        raise HTTPException(status_code=400, detail="请至少选择一种生成内容")
+
+    try:
+        kb_text = collect_kb_text(
+            kb_name=request.kb_name,
+            max_chunks=request.max_chunks,
+        )
+
+        prompt = build_kb_note_prompt(
+            kb_name=request.kb_name,
+            kb_text=kb_text,
+            generate_summary=request.generate_summary,
+            generate_outline=request.generate_outline,
+            generate_mindmap=request.generate_mindmap,
+        )
+
+        llm_client = get_llm_client()
+
+        result_text = await llm_client.complete(
+            prompt=prompt,
+            system_prompt="你是一个帮助学生整理知识库学习内容的中文学习助手。请严格按照要求输出 JSON。",
+        )
+
+        clean_text = result_text.strip()
+
+        if clean_text.startswith("```json"):
+            clean_text = clean_text[len("```json"):].strip()
+        elif clean_text.startswith("```"):
+            clean_text = clean_text[len("```"):].strip()
+
+        if clean_text.endswith("```"):
+            clean_text = clean_text[:-3].strip()
+
+        try:
+            parsed = json.loads(clean_text)
+        except Exception:
+            parsed = {
+                "raw_result": result_text
+            }
+
+        return {
+            "success": True,
+            "kb_name": request.kb_name,
             "generated": {
                 "summary": request.generate_summary,
                 "outline": request.generate_outline,
