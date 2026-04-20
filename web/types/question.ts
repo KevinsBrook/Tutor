@@ -22,6 +22,23 @@ export interface QuestionValidation {
   relevance?: "high" | "partial";
   kb_coverage?: string;
   extension_points?: string;
+  audit?: {
+    requested_difficulty?: string;
+    difficulty_alignment?: string;
+    relevance?: string;
+    kb_coverage?: string;
+    answer_uniqueness?: string;
+    distractor_quality?: string;
+    clarity?: string;
+    out_of_scope_risk?: string;
+    ambiguous_stem?: string;
+    latex_format_issue?: string;
+    source_count?: number;
+    distractor_candidate_count?: number;
+    distractor_selected_count?: number;
+    distractor_duplicate_removed?: number;
+    format_ok?: boolean;
+  };
 }
 
 // Question Plan (for custom mode)
@@ -29,6 +46,7 @@ export interface QuestionPlan {
   knowledge_point: string;
   difficulty: string;
   question_type: string;
+  cognitive_level?: string;
   num_questions: number;
   focuses: QuestionFocus[];
 }
@@ -41,6 +59,20 @@ export interface GeneratedQuestion {
   correct_answer: string;
   explanation: string;
   knowledge_point?: string;
+  cognitive_level?: string;
+  source_refs?: Array<{
+    id: string;
+    query: string;
+    snippet: string;
+  }>;
+  distractor_meta?: {
+    candidate_count?: number;
+    selected_count?: number;
+    duplicate_removed?: number;
+  };
+  blanks?: string[];
+  pairs?: Array<{ left: string; right: string }>;
+  steps?: string[];
 }
 
 export interface QuestionResult {
@@ -248,7 +280,23 @@ export interface QuestionAgentStatus {
 export interface QuestionConfig {
   topic: string;
   difficulty: "easy" | "medium" | "hard";
-  type: "choice" | "written";
+  type:
+    | "choice"
+    | "written"
+    | "true_false"
+    | "multiple_choice"
+    | "fill_blank"
+    | "matching"
+    | "term_definition"
+    | "ordering"
+    | "mixed";
+  bloomLevel:
+    | "remember"
+    | "understand"
+    | "apply"
+    | "analyze"
+    | "evaluate"
+    | "create";
   count: number;
   selectedKb: string;
 }
@@ -306,6 +354,7 @@ export interface QuestionContextState {
   topic: string;
   difficulty: string;
   type: string;
+  bloomLevel: string;
   count: number;
   selectedKb: string;
   progress: QuestionProgressInfo;
@@ -347,6 +396,7 @@ export const INITIAL_QUESTION_CONTEXT_STATE: QuestionContextState = {
   topic: "",
   difficulty: "medium",
   type: "choice",
+  bloomLevel: "understand",
   count: 1,
   selectedKb: "",
   progress: {

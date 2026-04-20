@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from src.agents.base_agent import BaseAgent
+from src.agents.question.quality import normalize_question_type
 
 
 class GenerateAgent(BaseAgent):
@@ -69,6 +70,14 @@ class GenerateAgent(BaseAgent):
         # Build requirements string
         requirements_str = json.dumps(requirement, ensure_ascii=False, indent=2)
 
+        # Resolve requested question type (focus type has higher priority)
+        raw_type = None
+        if focus and focus.get("type"):
+            raw_type = str(focus.get("type"))
+        elif requirement.get("question_type"):
+            raw_type = str(requirement.get("question_type"))
+        requested_type = normalize_question_type(raw_type, fallback="written")
+
         # Build focus string
         if focus:
             focus_str = f"Focus: {focus.get('focus', '')}\nType: {focus.get('type', requirement.get('question_type', 'written'))}"
@@ -90,6 +99,7 @@ class GenerateAgent(BaseAgent):
                 knowledge_context=knowledge_context,
                 focus_str=focus_str,
                 knowledge_point=requirement.get("knowledge_point", ""),
+                requested_type=requested_type,
             )
 
     async def _generate_custom(
@@ -98,6 +108,7 @@ class GenerateAgent(BaseAgent):
         knowledge_context: str,
         focus_str: str,
         knowledge_point: str,
+        requested_type: str,
     ) -> dict[str, Any]:
         """
         Generate a custom question (not based on reference).
@@ -131,6 +142,8 @@ class GenerateAgent(BaseAgent):
             if len(knowledge_context) > 4000
             else knowledge_context,
         )
+        schema_hint = self._build_type_specific_schema_hint(requested_type)
+        user_prompt = f"{user_prompt}\n\n{schema_hint}"
 
         try:
             response = await self.call_llm(
@@ -140,7 +153,7 @@ class GenerateAgent(BaseAgent):
                 stage="generate_question",
             )
 
-            question = self._parse_question_response(response)
+            question = self._parse_question_response(response, requested_type=requested_type)
             question["knowledge_point"] = knowledge_point
 
             self.logger.info(f"Generated {question.get('question_type', 'unknown')} question")
@@ -203,7 +216,10 @@ class GenerateAgent(BaseAgent):
                 stage="generate_with_reference",
             )
 
-            question = self._parse_question_response(response)
+            question = self._parse_question_response(
+                response,
+                requested_type=normalize_question_type("written"),
+            )
 
             self.logger.info(f"Generated mimic {question.get('question_type', 'unknown')} question")
 
@@ -219,7 +235,11 @@ class GenerateAgent(BaseAgent):
                 "error": str(e),
             }
 
-    def _parse_question_response(self, response: str) -> dict[str, Any]:
+    def _parse_question_response(
+        self,
+        response: str,
+        requested_type: str = "written",
+    ) -> dict[str, Any]:
         """
         Parse LLM response into question dict.
 
@@ -284,7 +304,11 @@ class GenerateAgent(BaseAgent):
 
         # Ensure question_type exists
         if "question_type" not in question:
-            question["question_type"] = "written"
+            question["question_type"] = requested_type
+        question["question_type"] = normalize_question_type(
+            str(question.get("question_type")),
+            fallback=requested_type,
+        )
 
         # Validate options for choice questions
         if question.get("question_type") == "choice":
@@ -309,8 +333,273 @@ class GenerateAgent(BaseAgent):
                     question["options"] = {"A": str(options)}
             elif len(options) < 2:
                 self.logger.warning(f"Choice question has only {len(options)} options")
+            question = self._refine_choice_question(question)
+        elif question.get("question_type") == "multiple_choice":
+            options = question.get("options")
+            if not isinstance(options, dict):
+                if isinstance(options, list):
+                    options = {chr(65 + i): str(opt) for i, opt in enumerate(options[:6])}
+                else:
+                    options = {}
+            question["options"] = options
+            question = self._refine_multiple_choice_question(question)
+
+        # Fill-blank canonical fields
+        if question.get("question_type") == "fill_blank":
+            if not isinstance(question.get("blanks"), list):
+                question["blanks"] = self._split_values(str(question.get("correct_answer", "")))
+            if not question["blanks"] and question.get("correct_answer"):
+                question["blanks"] = [str(question.get("correct_answer")).strip()]
+
+        # Matching / term-definition canonical fields
+        if question.get("question_type") in {"matching", "term_definition"}:
+            if not isinstance(question.get("pairs"), list):
+                question["pairs"] = self._pairs_from_answer(str(question.get("correct_answer", "")))
+            normalized_pairs = []
+            for p in question.get("pairs", []):
+                if isinstance(p, dict) and p.get("left") and p.get("right"):
+                    normalized_pairs.append(
+                        {"left": str(p.get("left")).strip(), "right": str(p.get("right")).strip()}
+                    )
+            question["pairs"] = normalized_pairs
+            if not question["correct_answer"] and normalized_pairs:
+                question["correct_answer"] = "||".join(
+                    [f"{x['left']}=>{x['right']}" for x in normalized_pairs]
+                )
+
+        # Ordering canonical fields
+        if question.get("question_type") == "ordering":
+            if not isinstance(question.get("steps"), list):
+                question["steps"] = self._split_order_steps(str(question.get("correct_answer", "")))
+            question["steps"] = [str(x).strip() for x in question.get("steps", []) if str(x).strip()]
+            if not question.get("correct_answer") and question["steps"]:
+                question["correct_answer"] = " -> ".join(question["steps"])
 
         return question
+
+    def _refine_choice_question(self, question: dict[str, Any]) -> dict[str, Any]:
+        """
+        Two-stage distractor quality enhancement:
+        1) candidate cleanup and normalization
+        2) deterministic ranking/selection for diversity and plausibility
+        """
+        options = question.get("options") if isinstance(question.get("options"), dict) else {}
+        cleaned_pairs = self._clean_option_candidates(options)
+        if not cleaned_pairs:
+            cleaned_pairs = [
+                ("A", "Option A"),
+                ("B", "Option B"),
+                ("C", "Option C"),
+                ("D", "Option D"),
+            ]
+
+        answer_label = str(question.get("correct_answer", "")).strip().upper()
+        answer_text = ""
+        if answer_label and answer_label in dict(cleaned_pairs):
+            answer_text = str(dict(cleaned_pairs).get(answer_label, "")).strip()
+        elif answer_label and answer_label not in {"A", "B", "C", "D"}:
+            answer_text = answer_label
+
+        if not answer_text:
+            answer_text = str(cleaned_pairs[0][1]).strip()
+
+        original_count = len(options)
+        unique_count = len(cleaned_pairs)
+        distractor_candidates = [(k, v) for k, v in cleaned_pairs if v.strip() != answer_text.strip()]
+        selected = self._select_best_distractors(
+            stem=str(question.get("question", "")),
+            correct_answer=answer_text,
+            candidates=[v for _, v in distractor_candidates],
+            target=3,
+        )
+
+        final_values = [answer_text] + selected
+        while len(final_values) < 4:
+            final_values.append(f"Distractor {len(final_values)}")
+
+        final_options: dict[str, str] = {}
+        labels = ["A", "B", "C", "D"]
+        correct_new_label = "A"
+        for idx, val in enumerate(final_values[:4]):
+            label = labels[idx]
+            final_options[label] = val
+            if val == answer_text:
+                correct_new_label = label
+
+        question["options"] = final_options
+        question["correct_answer"] = correct_new_label
+        question["distractor_meta"] = {
+            "candidate_count": max(0, unique_count - 1),
+            "selected_count": max(0, len(final_values[:4]) - 1),
+            "duplicate_removed": max(0, original_count - unique_count),
+        }
+        return question
+
+    def _refine_multiple_choice_question(self, question: dict[str, Any]) -> dict[str, Any]:
+        options = question.get("options") if isinstance(question.get("options"), dict) else {}
+        original_count = len(options)
+        cleaned_pairs = self._clean_option_candidates(options)
+        if not cleaned_pairs:
+            cleaned_pairs = [
+                ("A", "Option A"),
+                ("B", "Option B"),
+                ("C", "Option C"),
+                ("D", "Option D"),
+            ]
+
+        raw_answers = [
+            x.strip().upper()
+            for x in re.split(r"[,;/|\s]+", str(question.get("correct_answer", "")))
+            if x.strip()
+        ]
+        base_map = dict(cleaned_pairs)
+        correct_texts: list[str] = []
+        for a in raw_answers:
+            if a in base_map:
+                correct_texts.append(base_map[a])
+        if not correct_texts and cleaned_pairs:
+            correct_texts = [cleaned_pairs[0][1]]
+
+        distractor_candidates = [v for _, v in cleaned_pairs if v not in correct_texts]
+        selected = self._select_best_distractors(
+            stem=str(question.get("question", "")),
+            correct_answer="; ".join(correct_texts),
+            candidates=distractor_candidates,
+            target=max(2, 5 - len(correct_texts)),
+        )
+
+        final_values = correct_texts + selected
+        if len(final_values) < 4:
+            for _, v in cleaned_pairs:
+                if v not in final_values:
+                    final_values.append(v)
+                if len(final_values) >= 4:
+                    break
+        while len(final_values) < 4:
+            final_values.append(f"Distractor {len(final_values)}")
+
+        labels = ["A", "B", "C", "D", "E", "F"]
+        final_options: dict[str, str] = {}
+        answer_labels: list[str] = []
+        for idx, val in enumerate(final_values[:6]):
+            label = labels[idx]
+            final_options[label] = val
+            if val in correct_texts:
+                answer_labels.append(label)
+
+        if not answer_labels:
+            answer_labels = ["A"]
+        question["options"] = final_options
+        question["correct_answer"] = ",".join(sorted(answer_labels))
+        question["distractor_meta"] = {
+            "candidate_count": max(0, len(cleaned_pairs) - len(correct_texts)),
+            "selected_count": max(0, len(final_values[:6]) - len(correct_texts)),
+            "duplicate_removed": max(0, original_count - len(cleaned_pairs)),
+        }
+        return question
+
+    @staticmethod
+    def _clean_option_candidates(options: dict[str, Any]) -> list[tuple[str, str]]:
+        pairs: list[tuple[str, str]] = []
+        seen_values: set[str] = set()
+        for key, value in options.items():
+            label = str(key).strip().upper()[:1] or "A"
+            text = str(value).strip()
+            if not text:
+                continue
+            norm = re.sub(r"\s+", " ", text.lower())
+            if norm in seen_values:
+                continue
+            seen_values.add(norm)
+            pairs.append((label, text))
+        pairs.sort(key=lambda x: x[0])
+        return pairs
+
+    def _select_best_distractors(
+        self,
+        stem: str,
+        correct_answer: str,
+        candidates: list[str],
+        target: int = 3,
+    ) -> list[str]:
+        if not candidates:
+            return []
+
+        correct_tokens = self._tokenize_for_quality(correct_answer)
+        stem_tokens = self._tokenize_for_quality(stem)
+
+        def score(c: str) -> tuple[float, float]:
+            tokens = self._tokenize_for_quality(c)
+            overlap_correct = len(tokens & correct_tokens)
+            overlap_stem = len(tokens & stem_tokens)
+            length_penalty = abs(len(c) - max(1, len(correct_answer))) / max(1, len(correct_answer))
+            quality = (0.8 * overlap_stem) - (0.9 * overlap_correct) - (0.25 * length_penalty)
+            diversity_anchor = -float(len(tokens))
+            return (quality, diversity_anchor)
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for c in candidates:
+            norm = re.sub(r"\s+", " ", c.strip().lower())
+            if not norm or norm in seen:
+                continue
+            if norm == re.sub(r"\s+", " ", correct_answer.strip().lower()):
+                continue
+            seen.add(norm)
+            unique.append(c.strip())
+
+        ranked = sorted(unique, key=score, reverse=True)
+        return ranked[: max(0, target)]
+
+    @staticmethod
+    def _tokenize_for_quality(text: str) -> set[str]:
+        zh_words = re.findall(r"[\u4e00-\u9fa5]{2,}", text or "")
+        en_words = re.findall(r"[a-zA-Z]{3,}", (text or "").lower())
+        return set(zh_words + en_words)
+
+    @staticmethod
+    def _split_values(raw: str) -> list[str]:
+        return [x.strip() for x in re.split(r"[,;|\n]+", raw or "") if x.strip()]
+
+    @staticmethod
+    def _pairs_from_answer(raw: str) -> list[dict[str, str]]:
+        pairs: list[dict[str, str]] = []
+        chunks = [x.strip() for x in (raw or "").split("||") if x.strip()]
+        for chunk in chunks:
+            left, right = "", ""
+            if "=>" in chunk:
+                left, right = chunk.split("=>", 1)
+            elif ":" in chunk:
+                left, right = chunk.split(":", 1)
+            elif "-" in chunk:
+                left, right = chunk.split("-", 1)
+            if left.strip() and right.strip():
+                pairs.append({"left": left.strip(), "right": right.strip()})
+        return pairs
+
+    @staticmethod
+    def _split_order_steps(raw: str) -> list[str]:
+        return [x.strip() for x in re.split(r"->|=>|,|;", raw or "") if x.strip()]
+
+    @staticmethod
+    def _build_type_specific_schema_hint(requested_type: str) -> str:
+        common = (
+            "Output requirements: return JSON object only, no markdown code block. "
+            "Required fields: question_type, question, correct_answer, explanation."
+        )
+        if requested_type == "choice":
+            return f"{common}\nSingle-choice: options must include A/B/C/D. correct_answer must be one of A/B/C/D."
+        if requested_type == "multiple_choice":
+            return f"{common}\nMultiple-choice: options must include A/B/C/D. correct_answer uses comma-separated labels, e.g. A,C."
+        if requested_type == "true_false":
+            return f"{common}\nTrue/false: options fixed as A=True, B=False; correct_answer must be A or B."
+        if requested_type == "fill_blank":
+            return f"{common}\nFill-blank: provide blanks array in order; correct_answer joins blank answers with commas."
+        if requested_type in {"matching", "term_definition"}:
+            return f"{common}\nMatching: provide pairs array with {{left,right}}; correct_answer format: left=>right||left=>right."
+        if requested_type == "ordering":
+            return f"{common}\nOrdering: provide steps array in correct order; correct_answer format: step1 -> step2 -> step3."
+        return common
 
     def _clean_json_string(self, json_str: str) -> str:
         """
