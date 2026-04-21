@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 declare global {
-    interface Window {
-      webkitSpeechRecognition: any;
-      SpeechRecognition: any;
-    }
+  interface Window {
+    webkitSpeechRecognition: any;
+    SpeechRecognition: any;
+    __currentRecognition?: any;
   }
+}
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8001";
 
@@ -59,12 +60,22 @@ export default function StudentExperimentPage() {
     experiment_title: "",
   });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answerInputs, setAnswerInputs] = useState<Record<number, string>>({});
   const [latestResults, setLatestResults] = useState<Record<number, AnswerResult>>({});
+
+
+  const [deadlineAt, setDeadlineAt] = useState<string | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
+
+  const [pauseStats, setPauseStats] = useState<
+    Record<number, { pauseCount: number; longestPauseMs: number; answerStartedAt: number }>
+  >({});
+
+  const recognitionRef = useRef<any>(null);
+  const shouldKeepRecordingRef = useRef(false); 
   const [recordingQuestionId, setRecordingQuestionId] = useState<number | null>(null);
   const [speechSupported, setSpeechSupported] = useState(false);
   const selectedSubmission = useMemo(
@@ -116,6 +127,34 @@ export default function StudentExperimentPage() {
   
     setSpeechSupported(!!SpeechRecognition);
   }, []);
+  useEffect(() => {
+    if (!deadlineAt) {
+      setRemainingSeconds(0);
+      return;
+    }
+  
+    const updateRemaining = () => {
+      const normalizedDeadline =
+        typeof deadlineAt === "string" && deadlineAt.includes("T")
+          ? deadlineAt
+          : String(deadlineAt).replace(" ", "T");
+  
+      const deadline = new Date(normalizedDeadline).getTime();
+      const now = Date.now();
+      const diff = Math.max(0, Math.floor((deadline - now) / 1000));
+      setRemainingSeconds(diff);
+  
+      if (diff <= 0 && recognitionRef.current) {
+        shouldKeepRecordingRef.current = false;
+        recognitionRef.current.stop();
+      }
+    };
+  
+    updateRemaining();
+    const timer = setInterval(updateRemaining, 1000);
+  
+    return () => clearInterval(timer);
+  }, [deadlineAt]);
 
   const fetchMySubmissions = async (studentUsername: string) => {
     try {
@@ -209,7 +248,7 @@ export default function StudentExperimentPage() {
         },
         body: JSON.stringify({
           submission_id: submissionId,
-          question_count: 3,
+          question_count: Math.floor(Math.random() * 3) + 4, // 4~6
         }),
       });
 
@@ -221,7 +260,7 @@ export default function StudentExperimentPage() {
 
       alert("问题生成成功");
       setSelectedSubmissionId(submissionId);
-
+      setDeadlineAt(data.answer_deadline_at || null);
       setQuestions(data.questions || []);
       setAnswerInputs({});
       setLatestResults({});
@@ -265,6 +304,7 @@ export default function StudentExperimentPage() {
         }
       }
       setLatestResults(resultMap);
+      setDeadlineAt(data.submission?.answer_deadline_at || null);
     } catch (error: any) {
       alert(error.message || "获取实验详情失败");
     }
@@ -323,13 +363,17 @@ export default function StudentExperimentPage() {
     (window as any).__currentRecognition = recognition;
   };
   const handleStopSpeech = () => {
-    const recognition = (window as any).__currentRecognition;
-    if (recognition) {
-      recognition.stop();
+    shouldKeepRecordingRef.current = false;
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
     }
     setRecordingQuestionId(null);
   };
   const handleSubmitAnswer = async (questionId: number) => {
+    if (remainingSeconds <= 0) {
+      alert("答题时间已结束，无法继续提交");
+      return;
+    }
     const answerText = (answerInputs[questionId] || "").trim();
     if (!username) {
       alert("未获取到当前学生用户名");
@@ -352,6 +396,11 @@ export default function StudentExperimentPage() {
           username,
           question_id: questionId,
           answer_text: answerText,
+          pause_count: pauseStats[questionId]?.pauseCount || 0,
+          longest_pause_ms: pauseStats[questionId]?.longestPauseMs || 0,
+          answer_duration_seconds: pauseStats[questionId]?.answerStartedAt
+            ? Math.floor((Date.now() - pauseStats[questionId].answerStartedAt) / 1000)
+            : null,
         }),
       });
 
@@ -524,6 +573,14 @@ export default function StudentExperimentPage() {
                 ? `实验详情：第 ${selectedSubmission.assignment_no} 次 - ${selectedSubmission.experiment_title}`
                 : "实验问题与回答"}
             </h2>
+            {deadlineAt && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                答题剩余时间：
+                <span className="font-bold ml-2">
+                  {Math.floor(remainingSeconds / 60)} 分 {remainingSeconds % 60} 秒
+                </span>
+              </div>
+            )}
 
             {!selectedSubmissionId ? (
               <div className="text-slate-500">
@@ -554,17 +611,12 @@ export default function StudentExperimentPage() {
                       </div>
 
                       <div className="mt-4">
-                        <textarea
-                          value={answerInputs[q.id] || ""}
-                          onChange={(e) =>
-                            setAnswerInputs((prev) => ({
-                              ...prev,
-                              [q.id]: e.target.value,
-                            }))
-                          }
-                          placeholder="请输入你的回答"
-                          className="w-full min-h-[120px] px-4 py-3 rounded-xl border border-slate-300 outline-none bg-white"
-                        />
+                      <textarea
+                        value={answerInputs[q.id] || ""}
+                        readOnly
+                        placeholder="请点击“开始语音输入”后口头回答，识别结果会显示在这里"
+                        className="w-full min-h-[120px] px-4 py-3 rounded-xl border border-slate-300 outline-none bg-slate-50"
+                      />
                         {!speechSupported && (
                           <div className="mt-2 text-sm text-slate-500">
                              当前浏览器不支持语音识别，请使用文本输入，或换用最新版 Chrome。
@@ -577,7 +629,7 @@ export default function StudentExperimentPage() {
                           <>
                             <button
                               onClick={() => handleStartSpeech(q.id)}
-                              disabled={recordingQuestionId === q.id}
+                              disabled={recordingQuestionId === q.id || remainingSeconds <= 0}
                               className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                             >
                               {recordingQuestionId === q.id ? "正在识别..." : "开始语音输入"}
@@ -587,19 +639,20 @@ export default function StudentExperimentPage() {
                               onClick={handleStopSpeech}
                               disabled={recordingQuestionId !== q.id}
                               className="px-4 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
-                            > 
+                            >
                               停止语音输入
                             </button>
-                          </>
+                         </>
                         )}
 
                         <button
-                          onClick={() => handleSubmitAnswer(q.id)}
-                          disabled={submittingQuestionId === q.id}
+                         onClick={() => handleSubmitAnswer(q.id)}
+                          disabled={submittingQuestionId === q.id || remainingSeconds <= 0}
                           className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                         >
                           {submittingQuestionId === q.id ? "评分中..." : "提交回答并评分"}
                         </button>
+
                       </div>
 
                       {result && (

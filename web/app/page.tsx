@@ -59,6 +59,7 @@ export default function HomePage() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [showNotebookModal, setShowNotebookModal] = useState(false);
+  const [userRole, setUserRole] = useState<string | null>(null);
   const [saveToNotebookLoading, setSaveToNotebookLoading] = useState(false);
   const [generatedNotebookContent, setGeneratedNotebookContent] = useState<any>(null);
 
@@ -131,6 +132,21 @@ export default function HomePage() {
       });
     }
   }, [chatState.messages]);
+  useEffect(() => {
+    try {
+      const rawUser = localStorage.getItem("auth_user");
+      if (!rawUser) {
+        setUserRole(null);
+        return;
+      }
+  
+      const parsedUser = JSON.parse(rawUser);
+      setUserRole(parsedUser?.role || null);
+    } catch (error) {
+      console.error("读取登录用户角色失败:", error);
+      setUserRole(null);
+    }
+  }, []);
   const getChatSessionId = () => {
     return (
       (chatState as any).sessionId ||
@@ -412,7 +428,7 @@ export default function HomePage() {
     }
   };
 
-  const quickActions = [
+  const baseQuickActions = [
     {
       icon: Calculator,
       label: t("Smart Problem Solving"),
@@ -474,6 +490,37 @@ export default function HomePage() {
       description: t("Collaborative writing"),
     },
   ];
+  
+  const roleQuickActions =
+    userRole === "teacher"
+      ? [
+          {
+            icon: GraduationCap,
+            label: "教师端",
+            href: "/teacher",
+            cardClass:
+              "border-emerald-200/70 bg-emerald-50/70 text-emerald-700 hover:border-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300",
+            iconClass:
+              "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300",
+            description: "进入教师主页、查看学生信息与成绩",
+          },
+        ]
+      : userRole === "student"
+        ? [
+            {
+              icon: User,
+              label: "学生端",
+              href: "/student",
+              cardClass:
+                "border-blue-200/70 bg-blue-50/70 text-blue-700 hover:border-blue-400 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300",
+              iconClass:
+                "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300",
+              description: "进入学生主页、实验问答与成绩查看",
+            },
+          ]
+        : [];
+  
+  const quickActions = [...roleQuickActions, ...baseQuickActions];
 
   const hasMessages = chatState.messages.length > 0;
   const generatedNotebookRecord = buildGeneratedNoteForNotebook();

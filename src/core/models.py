@@ -91,10 +91,12 @@ class ExperimentSubmission(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
-
+    question_started_at = Column(DateTime, nullable=True)
+    answer_deadline_at = Column(DateTime, nullable=True)
     assignment_no = Column(Integer, nullable=False, index=True)  # 第几次实验
     experiment_title = Column(String(200), nullable=False)
-
+    question_started_at = Column(DateTime, nullable=True)
+    answer_deadline_at = Column(DateTime, nullable=True)
     original_filename = Column(String(255), nullable=False)
     report_file_path = Column(String(500), nullable=False)
     report_text = Column(Text, nullable=True)

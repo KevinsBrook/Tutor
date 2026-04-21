@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   CircleOff,
+  User,
   LucideIcon,
 } from "lucide-react";
 import { useGlobal } from "@/context/GlobalContext";
@@ -32,6 +33,8 @@ interface NavItem {
 
 const ALL_NAV_ITEMS: Record<string, { icon: LucideIcon; nameKey: string }> = {
   "/": { icon: Home, nameKey: "Home" },
+  "/student": { icon: User, nameKey: "学生端" },
+  "/teacher": { icon: GraduationCap, nameKey: "教师端" },
   "/history": { icon: History, nameKey: "History" },
   "/knowledge": { icon: BookOpen, nameKey: "Knowledge Bases" },
   "/notebook": { icon: Book, nameKey: "Notebooks" },
@@ -88,10 +91,34 @@ export default function Sidebar() {
           icon: ALL_NAV_ITEMS[href].icon,
         }));
     };
-
-    const start = buildNavItems(sidebarNavOrder.start);
-    const learnResearch = buildNavItems(sidebarNavOrder.learnResearch);
-
+  
+    const roleItems: NavItem[] =
+      session?.role === "teacher"
+        ? [
+            {
+              name: "教师端",
+              href: "/teacher",
+              icon: ALL_NAV_ITEMS["/teacher"].icon,
+            },
+          ]
+        : session?.role === "student"
+          ? [
+              {
+                name: "学生端",
+                href: "/student",
+                icon: ALL_NAV_ITEMS["/student"].icon,
+              },
+            ]
+          : [];
+  
+    const start = buildNavItems(
+      sidebarNavOrder.start.filter((href) => href !== "/student" && href !== "/teacher"),
+    );
+  
+    const learnResearch = buildNavItems(
+      sidebarNavOrder.learnResearch.filter((href) => href !== "/student" && href !== "/teacher"),
+    );
+  
     if (session?.role === "student" && !learnResearch.find((item) => item.href === "/wrongbook")) {
       learnResearch.unshift({
         name: "错题本",
@@ -99,8 +126,8 @@ export default function Sidebar() {
         icon: ALL_NAV_ITEMS["/wrongbook"].icon,
       });
     }
-
-    return { start, learnResearch };
+  
+    return { roleItems, start, learnResearch };
   }, [session?.role, sidebarNavOrder, t]);
 
   return (
@@ -109,10 +136,20 @@ export default function Sidebar() {
         <div className="w-4 shrink-0" />
 
         <nav className="hidden flex-1 items-center justify-center gap-2 overflow-x-auto px-2 lg:flex">
+          {navGroups.roleItems.map((item) => (
+            <NavLink key={item.href} item={item} isActive={pathname === item.href} />
+          ))}
+
+          {navGroups.roleItems.length > 0 && (
+            <div className="mx-1 h-6 w-px bg-slate-200" />
+          )}
+
           {navGroups.start.map((item) => (
             <NavLink key={item.href} item={item} isActive={pathname === item.href} />
           ))}
+
           <div className="mx-1 h-6 w-px bg-slate-200" />
+
           {navGroups.learnResearch.map((item) => (
             <NavLink key={item.href} item={item} isActive={pathname === item.href} />
           ))}
@@ -154,7 +191,7 @@ export default function Sidebar() {
       {mobileOpen && (
         <div className="border-t border-white/60 bg-white/95 p-3 shadow-lg backdrop-blur-xl lg:hidden">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {[...navGroups.start, ...navGroups.learnResearch].map((item) => (
+          {[...navGroups.roleItems, ...navGroups.start, ...navGroups.learnResearch].map((item) => (
               <NavLink
                 key={item.href}
                 item={item}

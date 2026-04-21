@@ -1,16 +1,17 @@
-from datetime import datetime
-from pathlib import Path
+import json
+import random
 import shutil
+from datetime import datetime, timedelta
+from pathlib import Path
 
+from docx import Document
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
+from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
+from src.api.utils.score_utils import upsert_assignment_score
 from src.core.database import get_db
-from src.core.models import ExperimentSubmission, Student, User
-import json
-from docx import Document
-from pypdf import PdfReader
-from pydantic import BaseModel
 from src.core.models import (
     ExperimentAnswer,
     ExperimentQuestion,
@@ -19,16 +20,18 @@ from src.core.models import (
     User,
 )
 from src.services.llm import get_llm_client
-from src.api.utils.score_utils import upsert_assignment_score
 
 router = APIRouter()
 class GenerateQuestionsRequest(BaseModel):
     submission_id: int
-    question_count: int = 3
+    question_count: int | None = None
 class SubmitAnswerRequest(BaseModel):
     username: str
     question_id: int
     answer_text: str
+    pause_count: int | None = None
+    longest_pause_ms: int | None = None
+    answer_duration_seconds: int | None = None
 def build_question_prompt(report_text: str, experiment_title: str, question_count: int) -> str:
     return f"""
 你是一名实验教学老师。请根据学生提交的实验报告内容，生成 {question_count} 个口头问答问题。
@@ -105,6 +108,9 @@ def build_grading_prompt(
     question_text: str,
     reference_points: str,
     answer_text: str,
+    pause_count: int | None = None,
+    longest_pause_ms: int | None = None,
+    answer_duration_seconds: int | None = None,
 ) -> str:
     return f"""
 你是一名实验教学评分老师。请根据学生实验报告、系统生成的问题、参考要点，以及学生的作答内容，对学生进行评分。
@@ -144,6 +150,15 @@ def build_grading_prompt(
 
 【学生回答】
 {answer_text}
+【作答行为指标】
+- 回答总时长（秒）：{answer_duration_seconds}
+- 停顿次数：{pause_count}
+- 最长停顿（毫秒）：{longest_pause_ms}
+
+评分要求补充：
+1. 可以把停顿情况作为“表达流畅度”的参考，但不能压倒知识内容本身；
+2. 如果学生内容正确但有少量停顿，不应严重扣分；
+3. 如果频繁长时间停顿、内容断裂明显，可以在“问题回答”部分适度扣分；
 """.strip()
 
 @router.post("/upload-report")
@@ -211,6 +226,8 @@ async def upload_experiment_report(
             "text_extracted": bool(submission.report_text and submission.report_text.strip()),
             "report_text_length": len(submission.report_text or ""),
             "report_text_preview": (submission.report_text or "")[:300],
+            "question_started_at": submission.question_started_at,
+            "answer_deadline_at": submission.answer_deadline_at,
         },
     }
 
@@ -275,11 +292,11 @@ async def generate_experiment_questions(
     for q in old_questions:
         db.delete(q)
     db.commit()
-
+    question_count = request.question_count or random.randint(4, 6)
     prompt = build_question_prompt(
         report_text=submission.report_text,
         experiment_title=submission.experiment_title,
-        question_count=request.question_count,
+        question_count=question_count,
     )
 
     try:
@@ -300,7 +317,7 @@ async def generate_experiment_questions(
             clean_text = clean_text[:-3].strip()
 
         try:
-            parsed = json.loads(result_text)
+            parsed = json.loads(clean_text)
         except Exception:
             raise HTTPException(
                 status_code=500,
@@ -331,12 +348,17 @@ async def generate_experiment_questions(
             )
 
         submission.status = "questioned"
+        submission.question_started_at = datetime.now()
+        submission.answer_deadline_at = datetime.now() + timedelta(minutes=5)
         db.commit()
 
         return {
             "success": True,
             "message": "问题生成成功",
             "submission_id": submission.id,
+            "question_count": len(saved_questions),
+            "question_started_at": submission.question_started_at,
+            "answer_deadline_at": submission.answer_deadline_at,
             "questions": saved_questions,
         }
 
@@ -364,11 +386,13 @@ async def get_submission_questions(submission_id: int, db: Session = Depends(get
 
     return {
         "submission": {
-            "id": submission.id,
-            "assignment_no": submission.assignment_no,
-            "experiment_title": submission.experiment_title,
-            "status": submission.status,
-        },
+                "id": submission.id,
+                "assignment_no": submission.assignment_no,
+                "experiment_title": submission.experiment_title,
+                "status": submission.status,
+                "question_started_at": submission.question_started_at,
+                "answer_deadline_at": submission.answer_deadline_at,
+            },
         "questions": [
             {
                 "id": q.id,
@@ -418,6 +442,9 @@ async def submit_answer_and_grade(
         question_text=question.question_text,
         reference_points=question.reference_points or "",
         answer_text=request.answer_text,
+        pause_count=request.pause_count,
+        longest_pause_ms=request.longest_pause_ms,
+        answer_duration_seconds=request.answer_duration_seconds,
     )
 
     try:
@@ -559,6 +586,8 @@ async def get_submission_detail(submission_id: int, db: Session = Depends(get_db
             "assignment_no": submission.assignment_no,
             "experiment_title": submission.experiment_title,
             "status": submission.status,
+            "question_started_at": submission.question_started_at,
+            "answer_deadline_at": submission.answer_deadline_at,
         },
         "questions": result,
     }
