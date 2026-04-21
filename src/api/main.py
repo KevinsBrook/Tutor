@@ -4,10 +4,12 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from src.core.init_db import init_db
 
 from src.api.routers import (
     assignment_review,
     agent_config,
+    auth,
     chat,
     co_writer,
     config,
@@ -20,7 +22,10 @@ from src.api.routers import (
     research,
     settings,
     solve,
+    experiment,
+    student,
     system,
+    teacher
 )
 from src.logging import get_logger
 
@@ -128,6 +133,9 @@ async def lifespan(app: FastAPI):
     """
     # Execute on startup
     logger.info("Application startup")
+    # Initialize database tables
+    init_db()
+    logger.info("Database initialized")
 
     # Validate configuration consistency
     validate_tool_consistency()
@@ -189,7 +197,10 @@ app.mount("/api/outputs", StaticFiles(directory=str(user_dir)), name="outputs")
 
 # Include routers
 app.include_router(solve.router, prefix="/api/v1", tags=["solve"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
+app.include_router(student.router, prefix="/api/v1/student", tags=["student"])
+app.include_router(teacher.router, prefix="/api/v1/teacher", tags=["teacher"])
 app.include_router(question.router, prefix="/api/v1/question", tags=["question"])
 app.include_router(research.router, prefix="/api/v1/research", tags=["research"])
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["knowledge"])
@@ -197,6 +208,7 @@ app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboar
 app.include_router(co_writer.router, prefix="/api/v1/co_writer", tags=["co_writer"])
 app.include_router(notebook.router, prefix="/api/v1/notebook", tags=["notebook"])
 app.include_router(guide.router, prefix="/api/v1/guide", tags=["guide"])
+app.include_router(experiment.router, prefix="/api/v1/experiment", tags=["experiment"])
 app.include_router(ideagen.router, prefix="/api/v1/ideagen", tags=["ideagen"])
 app.include_router(settings.router, prefix="/api/v1/settings", tags=["settings"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])

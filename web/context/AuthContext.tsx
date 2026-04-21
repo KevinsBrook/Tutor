@@ -19,72 +19,93 @@ interface AuthContextType {
   session: AuthSession | null;
   isAuthenticated: boolean;
   isReady: boolean;
-  login: (username: string, password: string) => LoginResult;
+  login: (username: string, password: string) => Promise<LoginResult>;
   logout: () => void;
+  refreshSession: () => void;
 }
 
-const AUTH_STORAGE_KEY = "deeptutor-auth-session";
-
-const DEMO_CREDENTIALS: Record<string, { password: string; role: UserRole }> = {
-  teacher: { password: "teacher123", role: "teacher" },
-  student: { password: "student123", role: "student" },
-};
+const AUTH_USER_KEY = "auth_user";
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+function readSessionFromStorage(): AuthSession | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const rawUser = localStorage.getItem(AUTH_USER_KEY);
+    if (!rawUser) return null;
+
+    const parsedUser = JSON.parse(rawUser);
+    if (!parsedUser?.username || !parsedUser?.role) return null;
+
+    return {
+      username: parsedUser.username,
+      role: parsedUser.role,
+      loggedInAt: Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [isReady, setIsReady] = useState(false);
 
+  const refreshSession = () => {
+    const nextSession = readSessionFromStorage();
+    setSession(nextSession);
+  };
+
   React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (!raw) {
-        setSession(null);
-        setIsReady(true);
-        return;
-      }
-      const parsed = JSON.parse(raw) as AuthSession;
-      if (parsed?.username && parsed?.role) {
-        setSession(parsed);
-      } else {
-        setSession(null);
-      }
-    } catch {
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-      setSession(null);
-    } finally {
-      setIsReady(true);
-    }
+    refreshSession();
+    setIsReady(true);
   }, []);
 
-  const login = (username: string, password: string): LoginResult => {
-    const normalized = username.trim().toLowerCase();
-    const expected = DEMO_CREDENTIALS[normalized];
+  const login = async (username: string, password: string): Promise<LoginResult> => {
+    const API_BASE =
+      process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8001";
 
-    if (!expected || expected.password !== password) {
-      return { success: false, error: "用户名或密码错误" };
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { success: false, error: data.detail || "用户名或密码错误" };
+      }
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem("auth_user", JSON.stringify(data.user));
+        localStorage.setItem("auth_profile", JSON.stringify(data.profile || {}));
+      }
+
+      setSession({
+        username: data.user.username,
+        role: data.user.role,
+        loggedInAt: Date.now(),
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || "登录失败" };
     }
-
-    const nextSession: AuthSession = {
-      username: normalized,
-      role: expected.role,
-      loggedInAt: Date.now(),
-    };
-
-    setSession(nextSession);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextSession));
-    }
-
-    return { success: true };
   };
 
   const logout = () => {
     setSession(null);
     if (typeof window !== "undefined") {
-      localStorage.removeItem(AUTH_STORAGE_KEY);
+      localStorage.removeItem("auth_user");
+      localStorage.removeItem("auth_profile");
     }
   };
 
@@ -95,6 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isReady,
       login,
       logout,
+      refreshSession,
     }),
     [isReady, session],
   );
@@ -109,4 +131,3 @@ export function useAuth() {
   }
   return context;
 }
-

@@ -13,18 +13,42 @@ export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    const result = login(username, password);
-    if (!result.success) {
-      setError(result.error || "登录失败");
+    if (!username.trim() || !password.trim()) {
+      setError("请输入用户名和密码");
       return;
     }
 
-    router.replace("/question");
+    try {
+      setLoading(true);
+
+      const result = await login(username.trim(), password);
+
+      if (!result.success) {
+        setError(result.error || "登录失败");
+        return;
+      }
+
+      const rawUser = localStorage.getItem("auth_user");
+      const user = rawUser ? JSON.parse(rawUser) : null;
+
+      if (user?.role === "teacher") {
+        router.replace("/teacher");
+      } else if (user?.role === "student") {
+        router.replace("/student");
+      } else {
+        router.replace("/question");
+      }
+    } catch (err: any) {
+      setError(err?.message || "登录失败，请检查后端是否启动");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -37,19 +61,26 @@ export default function LoginPage() {
           <div className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-sm text-indigo-700">
             <ShieldCheck className="h-4 w-4" /> 教师/学生双端入口
           </div>
-          <h1 className="mt-4 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">欢迎使用智能教学平台</h1>
+          <h1 className="mt-4 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
+            欢迎使用智能教学平台
+          </h1>
           <p className="mt-3 max-w-xl text-slate-600">
-            本系统提供作业发布、作业提交、后续评审与错题沉淀能力。当前为演示登录模式，使用固定账号即可体验教师端与学生端。
+            本系统支持教师与学生双端登录。学生可查看个人信息、作业成绩与智能评测结果，
+            教师可查看学生信息、作业成绩与系统自动评分记录。
           </p>
 
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
-              <p className="text-sm font-semibold text-indigo-700">教师端账号</p>
-              <p className="mt-2 font-mono text-sm text-indigo-900">teacher / teacher123</p>
+              <p className="text-sm font-semibold text-indigo-700">教师端</p>
+              <p className="mt-2 text-sm text-indigo-900">
+                登录后可查看学生信息、成绩与评测结果
+              </p>
             </div>
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
-              <p className="text-sm font-semibold text-emerald-700">学生端账号</p>
-              <p className="mt-2 font-mono text-sm text-emerald-900">student / student123</p>
+              <p className="text-sm font-semibold text-emerald-700">学生端</p>
+              <p className="mt-2 text-sm text-emerald-900">
+                登录后可查看个人信息、作业成绩与系统反馈
+              </p>
             </div>
           </div>
         </section>
@@ -67,7 +98,7 @@ export default function LoginPage() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="w-full bg-transparent text-slate-800 outline-none"
-                  placeholder="teacher 或 student"
+                  placeholder="请输入用户名"
                 />
               </div>
             </label>
@@ -87,16 +118,41 @@ export default function LoginPage() {
             </label>
 
             {error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                {error}
+              </div>
             )}
 
             <button
               type="submit"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-2.5 font-medium text-white transition hover:bg-indigo-700"
+              disabled={loading}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-2.5 font-medium text-white transition hover:bg-indigo-700 disabled:opacity-50"
             >
-              <LogIn className="h-4 w-4" /> 进入系统
+              <LogIn className="h-4 w-4" />
+              {loading ? "登录中..." : "进入系统"}
             </button>
+
+            <div className="mt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={() => router.push("/register/student")}
+                className="flex-1 px-4 py-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600"
+              >
+                学生注册
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/register/teacher")}
+                className="flex-1 px-4 py-2 rounded-lg bg-violet-500 text-white hover:bg-violet-600"
+              >
+                教师注册
+              </button>
+            </div>
           </form>
+
+          <div className="mt-6 text-xs text-slate-400">
+            说明：当前页面已接入后端真实登录接口。
+          </div>
         </section>
       </div>
     </div>
