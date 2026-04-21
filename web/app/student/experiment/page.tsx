@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-
+declare global {
+    interface Window {
+      webkitSpeechRecognition: any;
+      SpeechRecognition: any;
+    }
+  }
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8001";
 
@@ -60,7 +65,8 @@ export default function StudentExperimentPage() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answerInputs, setAnswerInputs] = useState<Record<number, string>>({});
   const [latestResults, setLatestResults] = useState<Record<number, AnswerResult>>({});
-
+  const [recordingQuestionId, setRecordingQuestionId] = useState<number | null>(null);
+  const [speechSupported, setSpeechSupported] = useState(false);
   const selectedSubmission = useMemo(
     () => submissions.find((item) => item.id === selectedSubmissionId) || null,
     [submissions, selectedSubmissionId],
@@ -102,6 +108,14 @@ export default function StudentExperimentPage() {
 
     init();
   }, [router]);
+  useEffect(() => {
+    const SpeechRecognition =
+      typeof window !== "undefined"
+        ? window.SpeechRecognition || window.webkitSpeechRecognition
+        : null;
+  
+    setSpeechSupported(!!SpeechRecognition);
+  }, []);
 
   const fetchMySubmissions = async (studentUsername: string) => {
     try {
@@ -255,7 +269,66 @@ export default function StudentExperimentPage() {
       alert(error.message || "获取实验详情失败");
     }
   };
-
+  const handleStartSpeech = (questionId: number) => {
+    const SpeechRecognition =
+      typeof window !== "undefined"
+        ? window.SpeechRecognition || window.webkitSpeechRecognition
+        : null;
+  
+    if (!SpeechRecognition) {
+      alert("当前浏览器不支持语音识别，建议使用最新版 Chrome");
+      return;
+    }
+  
+    const recognition = new SpeechRecognition();
+    recognition.lang = "zh-CN";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+  
+    setRecordingQuestionId(questionId);
+  
+    let finalTranscript = "";
+  
+    recognition.onresult = (event: any) => {
+      let interimTranscript = "";
+  
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+  
+      setAnswerInputs((prev) => ({
+        ...prev,
+        [questionId]: `${finalTranscript}${interimTranscript}`,
+      }));
+    };
+  
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error:", event);
+      alert("语音识别失败，请重试");
+      setRecordingQuestionId(null);
+    };
+  
+    recognition.onend = () => {
+      setRecordingQuestionId(null);
+    };
+  
+    recognition.start();
+  
+    // 挂到 window 上，方便 stop 时结束当前识别
+    (window as any).__currentRecognition = recognition;
+  };
+  const handleStopSpeech = () => {
+    const recognition = (window as any).__currentRecognition;
+    if (recognition) {
+      recognition.stop();
+    }
+    setRecordingQuestionId(null);
+  };
   const handleSubmitAnswer = async (questionId: number) => {
     const answerText = (answerInputs[questionId] || "").trim();
     if (!username) {
@@ -365,11 +438,12 @@ export default function StudentExperimentPage() {
               <input
                 id="experiment-file-input"
                 type="file"
+                accept=".txt,.docx,.pdf"
                 onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                 className="block w-full rounded-xl border border-slate-300 bg-white px-4 py-3"
               />
               <p className="mt-2 text-sm text-slate-500">
-                当前第一版建议先上传 txt 文件，后面再扩展 pdf/docx。
+                当前支持上传 txt、docx、pdf 文件；扫描版 pdf 可能无法正确提取文字。
               </p>
             </div>
 
@@ -491,9 +565,34 @@ export default function StudentExperimentPage() {
                           placeholder="请输入你的回答"
                           className="w-full min-h-[120px] px-4 py-3 rounded-xl border border-slate-300 outline-none bg-white"
                         />
+                        {!speechSupported && (
+                          <div className="mt-2 text-sm text-slate-500">
+                             当前浏览器不支持语音识别，请使用文本输入，或换用最新版 Chrome。
+                          </div>
+                        )}
                       </div>
 
-                      <div className="mt-3">
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        {speechSupported && (
+                          <>
+                            <button
+                              onClick={() => handleStartSpeech(q.id)}
+                              disabled={recordingQuestionId === q.id}
+                              className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                            >
+                              {recordingQuestionId === q.id ? "正在识别..." : "开始语音输入"}
+                            </button>
+
+                            <button
+                              onClick={handleStopSpeech}
+                              disabled={recordingQuestionId !== q.id}
+                              className="px-4 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
+                            > 
+                              停止语音输入
+                            </button>
+                          </>
+                        )}
+
                         <button
                           onClick={() => handleSubmitAnswer(q.id)}
                           disabled={submittingQuestionId === q.id}
