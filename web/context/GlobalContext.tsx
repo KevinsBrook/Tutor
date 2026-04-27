@@ -134,6 +134,7 @@ interface QuestionState {
   topic: string;
   difficulty: string;
   type: string;
+  bloomLevel: string;
   count: number;
   selectedKb: string;
   progress: QuestionProgressInfo;
@@ -614,7 +615,7 @@ export function GlobalProvider({ children }: { children: React.ReactNode }) {
   // --- Sidebar Customization State ---
   const DEFAULT_DESCRIPTION = "✨ Data Intelligence Lab @ HKU";
   const DEFAULT_NAV_ORDER: SidebarNavOrder = {
-    start: ["/", "/history", "/knowledge", "/notebook"],
+    start: ["/", "/chat", "/history", "/knowledge", "/notebook"],
     learnResearch: [
       "/question",
       "/solver",

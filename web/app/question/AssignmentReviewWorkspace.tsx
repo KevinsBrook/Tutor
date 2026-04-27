@@ -33,10 +33,16 @@ interface AssignmentItem {
   title: string;
   description: string;
   teacher_username: string;
+  course_id?: number | null;
+  chapter_id?: number | null;
+  course_name?: string;
+  chapter_title?: string;
   status: "draft" | "published";
   confirmed: boolean;
   rubric_items: RubricItem[];
   files: Array<{ filename: string; path: string; size: number }>;
+  knowledge_links?: KnowledgeLink[];
+  knowledge_candidates?: KnowledgeCandidate[];
   created_at: number;
 }
 
@@ -68,6 +74,7 @@ interface SubmissionItem {
     summary: string;
     missing_points?: string[];
     suggestions?: string[];
+    knowledge_results?: KnowledgeResult[];
     errors?: Array<{ type: string; dimension?: string; detail: string }>;
     rubric_scores?: Array<{
       name: string;
@@ -82,6 +89,7 @@ interface WrongbookDraftItem {
   feedback: string;
   error_type: string;
   knowledge_point: string;
+  knowledge_point_id?: number | null;
   suggestion: string;
 }
 
@@ -103,6 +111,76 @@ interface RubricDraftApiResponse {
   rubric_items: RubricDraftApiItem[];
 }
 
+interface QuestionSourceRef {
+  id: string | number;
+  query: string;
+  snippet: string;
+}
+
+interface CourseOption {
+  id: number;
+  name: string;
+  description?: string;
+  knowledge_point_count?: number;
+}
+
+interface ChapterOption {
+  id: number;
+  title: string;
+  order_index: number;
+}
+
+interface KnowledgeLink {
+  knowledge_point_id: number;
+  knowledge_point: string;
+  chapter_title?: string;
+  match_score?: number;
+  priority?: number;
+  source?: string;
+}
+
+interface KnowledgeCandidate {
+  candidate_id: string;
+  name: string;
+  description?: string;
+  chapter_id?: number | null;
+  priority?: number;
+  status?: string;
+}
+
+interface KnowledgeResult {
+  knowledge_point_id?: number | null;
+  knowledge_point: string;
+  chapter_title?: string;
+  score_ratio: number;
+  status: "correct" | "partial" | "incorrect";
+  feedback: string;
+}
+
+interface CourseMaterialOption {
+  id: number;
+  kb_name?: string | null;
+  title?: string;
+  display_name?: string;
+  original_filename?: string | null;
+}
+
+interface CourseKnowledgePointOption {
+  id: number;
+  name: string;
+  description?: string;
+  chapter_title?: string;
+  source_material_id?: number | null;
+  priority: number;
+  is_confirmed: boolean;
+  mastery?: {
+    mastery_level: number;
+    correct_count: number;
+    wrong_count: number;
+    practice_count: number;
+  };
+}
+
 interface ReviewDraft {
   totalScore: string;
   feedback: string;
@@ -111,6 +189,7 @@ interface ReviewDraft {
 }
 
 type PracticeStatus = "correct" | "partial" | "incorrect";
+type QuestionSourceMode = "manual" | "course";
 
 interface PracticeItemReport {
   question_id: string;
@@ -198,6 +277,7 @@ function buildReviewDraft(sub: SubmissionItem): ReviewDraft {
         feedback: "",
         error_type: "",
         knowledge_point: "",
+        knowledge_point_id: null,
         suggestion: "",
       },
     ],
@@ -709,12 +789,23 @@ export default function AssignmentReviewWorkspace() {
   const [timerMinutes, setTimerMinutes] = useState(15);
   const [timeLeftSec, setTimeLeftSec] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
+  const [questionSourceMode, setQuestionSourceMode] = useState<QuestionSourceMode>("manual");
+  const [courseOptions, setCourseOptions] = useState<CourseOption[]>([]);
+  const [coursePoints, setCoursePoints] = useState<CourseKnowledgePointOption[]>([]);
+  const [courseMaterials, setCourseMaterials] = useState<CourseMaterialOption[]>([]);
+  const [selectedQuestionCourseId, setSelectedQuestionCourseId] = useState<number | null>(null);
+  const [selectedQuestionPointId, setSelectedQuestionPointId] = useState<number | null>(null);
+  const [generatedQuestionPointId, setGeneratedQuestionPointId] = useState<number | null>(null);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [rubricText, setRubricText] = useState("准确性|40\n完整性|30\n表达清晰度|30");
   const [taskPoints, setTaskPoints] = useState<string[]>([]);
   const [teacherFiles, setTeacherFiles] = useState<File[]>([]);
+  const [assignmentCourseOptions, setAssignmentCourseOptions] = useState<CourseOption[]>([]);
+  const [assignmentCourseId, setAssignmentCourseId] = useState<number | null>(null);
+  const [assignmentChapterId, setAssignmentChapterId] = useState<number | null>(null);
+  const [assignmentChapters, setAssignmentChapters] = useState<ChapterOption[]>([]);
   const [teacherAssignments, setTeacherAssignments] = useState<AssignmentItem[]>([]);
   const [publishChecks, setPublishChecks] = useState<Record<string, boolean>>({});
   const [teacherSubmissions, setTeacherSubmissions] = useState<SubmissionItem[]>([]);
@@ -736,6 +827,20 @@ export default function AssignmentReviewWorkspace() {
   const isResult = questionState.step === "result";
   const currentQuestion = questionState.results[activeIndex];
   const canStartCustom = questionState.topic.trim().length > 0;
+  const selectedCoursePoint = useMemo(
+    () => coursePoints.find((point) => point.id === selectedQuestionPointId) || null,
+    [coursePoints, selectedQuestionPointId],
+  );
+  const selectedCoursePointKb = useMemo(() => {
+    if (!selectedCoursePoint?.source_material_id) return "";
+    const material = courseMaterials.find((item) => item.id === selectedCoursePoint.source_material_id);
+    return material?.kb_name || "";
+  }, [courseMaterials, selectedCoursePoint]);
+  const selectedCoursePointSourceName = useMemo(() => {
+    if (!selectedCoursePoint?.source_material_id) return "";
+    const material = courseMaterials.find((item) => item.id === selectedCoursePoint.source_material_id);
+    return material?.display_name || material?.title || material?.original_filename || "";
+  }, [courseMaterials, selectedCoursePoint]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -751,6 +856,96 @@ export default function AssignmentReviewWorkspace() {
       .catch(() => setKbs([]));
     return () => controller.abort();
   }, [questionState.selectedKb, setQuestionState]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(apiUrl("/api/v1/courses"), { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        const list = Array.isArray(data.courses) ? data.courses : [];
+        setCourseOptions(list);
+        setSelectedQuestionCourseId((prev) => prev ?? list[0]?.id ?? null);
+      })
+      .catch(() => setCourseOptions([]));
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (role !== "teacher" || !session?.username) {
+      setAssignmentCourseOptions([]);
+      return;
+    }
+    const controller = new AbortController();
+    fetch(apiUrl(`/api/v1/courses?teacher_username=${encodeURIComponent(session.username)}`), {
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        const list = Array.isArray(data.courses) ? data.courses : [];
+        setAssignmentCourseOptions(list);
+        setAssignmentCourseId((prev) =>
+          list.some((course: CourseOption) => course.id === prev) ? prev : list[0]?.id ?? null,
+        );
+      })
+      .catch(() => setAssignmentCourseOptions([]));
+    return () => controller.abort();
+  }, [role, session?.username]);
+
+  useEffect(() => {
+    if (!selectedQuestionCourseId) {
+      setCoursePoints([]);
+      setCourseMaterials([]);
+      setSelectedQuestionPointId(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const params = new URLSearchParams({ confirmed_only: "true" });
+    if (session?.role === "student" && session.username) {
+      params.set("student_username", session.username);
+    }
+    Promise.all([
+      fetch(apiUrl(`/api/v1/courses/${selectedQuestionCourseId}/knowledge-points?${params.toString()}`), {
+        signal: controller.signal,
+      }).then((res) => res.json()),
+      fetch(apiUrl(`/api/v1/courses/${selectedQuestionCourseId}/materials`), {
+        signal: controller.signal,
+      }).then((res) => res.json()),
+    ])
+      .then(([pointData, materialData]) => {
+        const points = Array.isArray(pointData.knowledge_points) ? pointData.knowledge_points : [];
+        setCoursePoints(points);
+        setCourseMaterials(Array.isArray(materialData.materials) ? materialData.materials : []);
+        setSelectedQuestionPointId((prev) =>
+          points.some((point: CourseKnowledgePointOption) => point.id === prev) ? prev : points[0]?.id ?? null,
+        );
+      })
+      .catch(() => {
+        setCoursePoints([]);
+        setCourseMaterials([]);
+      });
+    return () => controller.abort();
+  }, [selectedQuestionCourseId, session?.role, session?.username]);
+
+  useEffect(() => {
+    if (!assignmentCourseId) {
+      setAssignmentChapters([]);
+      setAssignmentChapterId(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetch(apiUrl(`/api/v1/courses/${assignmentCourseId}/chapters`), { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        const chapters = Array.isArray(data.chapters) ? data.chapters : [];
+        setAssignmentChapters(chapters);
+        setAssignmentChapterId((prev) =>
+          chapters.some((chapter: ChapterOption) => chapter.id === prev) ? prev : chapters[0]?.id ?? null,
+        );
+      })
+      .catch(() => setAssignmentChapters([]));
+    return () => controller.abort();
+  }, [assignmentCourseId]);
 
   const loadTeacherAssignments = useCallback(async () => {
     if (!session?.username) return;
@@ -851,6 +1046,8 @@ export default function AssignmentReviewWorkspace() {
       form.append("teacher_username", session.username);
       form.append("title", title.trim());
       form.append("description", description.trim());
+      if (assignmentCourseId) form.append("course_id", String(assignmentCourseId));
+      if (assignmentChapterId) form.append("chapter_id", String(assignmentChapterId));
       form.append("rubric_json", JSON.stringify(parseRubricText(rubricText)));
       teacherFiles.forEach((f) => form.append("files", f));
 
@@ -885,6 +1082,8 @@ export default function AssignmentReviewWorkspace() {
           title: title.trim(),
           description: description.trim(),
           file_names: teacherFiles.map((f) => f.name),
+          course_id: assignmentCourseId,
+          chapter_id: assignmentChapterId,
           expected_total_score: 100,
         }),
       });
@@ -893,9 +1092,10 @@ export default function AssignmentReviewWorkspace() {
         throw new Error("detail" in data ? data.detail || "生成草稿失败" : "生成草稿失败");
       }
 
-      const lines = data.rubric_items.map((item) => `${item.name}|${item.score}`);
+      const draft = data as RubricDraftApiResponse;
+      const lines = draft.rubric_items.map((item: RubricDraftApiItem) => `${item.name}|${item.score}`);
       setRubricText(lines.join("\n"));
-      setTaskPoints(data.task_points || []);
+      setTaskPoints(draft.task_points || []);
       setMessage("已生成 rubric 草稿与任务要点，你可以继续编辑后创建作业。");
     } catch (e: any) {
       setMessage(e.message || "生成草稿失败");
@@ -925,6 +1125,40 @@ export default function AssignmentReviewWorkspace() {
       await loadTeacherAssignments();
     } catch (e: any) {
       setMessage(e.message || "发布失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmAssignmentCandidate = async (assignment: AssignmentItem, candidate: KnowledgeCandidate) => {
+    if (!session?.username) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await fetch(
+        apiUrl(`/api/v1/assignment-review/teacher/assignments/${assignment.id}/knowledge-candidates/confirm`),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            teacher_username: session.username,
+            candidates: [
+              {
+                name: candidate.name,
+                description: candidate.description || "由作业审查模块识别并确认。",
+                priority: candidate.priority || 3,
+                chapter_id: candidate.chapter_id || assignment.chapter_id || null,
+              },
+            ],
+          }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "候选知识点确认失败");
+      setMessage("候选知识点已加入课程知识点库，并关联到该作业。");
+      await loadTeacherAssignments();
+    } catch (e: any) {
+      setMessage(e.message || "候选知识点确认失败");
     } finally {
       setLoading(false);
     }
@@ -990,6 +1224,7 @@ export default function AssignmentReviewWorkspace() {
         feedback: w.feedback.trim() || "建议复盘本题。",
         error_type: w.error_type.trim(),
         knowledge_point: w.knowledge_point.trim(),
+        knowledge_point_id: w.knowledge_point_id || null,
         suggestion: w.suggestion.trim(),
       }));
 
@@ -1024,6 +1259,7 @@ export default function AssignmentReviewWorkspace() {
 
   const startCustom = () => {
     if (!canStartCustom) return;
+    setGeneratedQuestionPointId(null);
     startQuestionGen(
       questionState.topic,
       questionState.difficulty,
@@ -1031,6 +1267,45 @@ export default function AssignmentReviewWorkspace() {
       questionState.bloomLevel || "understand",
       questionState.count,
       questionState.selectedKb,
+    );
+    setAnswers({});
+    setMatchingInput({});
+    setOrderingInput({});
+    setSubmittedMap({});
+    setPracticeReport(null);
+    setActiveIndex(0);
+    if (practiceMode === "exam") {
+      setTimeLeftSec(Math.max(60, timerMinutes * 60));
+      setTimerRunning(true);
+    } else {
+      setTimeLeftSec(0);
+      setTimerRunning(false);
+    }
+  };
+
+  const startCoursePointQuestion = () => {
+    if (!selectedCoursePoint) {
+      setMessage("请先选择课程知识点。");
+      return;
+    }
+    const kbName = selectedCoursePointKb || questionState.selectedKb;
+    if (!kbName) {
+      setMessage("当前知识点还没有可用知识库，请先在课程中心解析资料，或手动选择一个知识库。");
+      return;
+    }
+    setGeneratedQuestionPointId(selectedCoursePoint.id);
+    setQuestionState((prev) => ({
+      ...prev,
+      topic: selectedCoursePoint.name,
+      selectedKb: kbName,
+    }));
+    startQuestionGen(
+      selectedCoursePoint.name,
+      questionState.difficulty,
+      questionState.type,
+      questionState.bloomLevel || "understand",
+      questionState.count,
+      kbName,
     );
     setAnswers({});
     setMatchingInput({});
@@ -1136,6 +1411,32 @@ export default function AssignmentReviewWorkspace() {
     }
   }, [questionState.topic, session?.username]);
 
+  const syncMasteryFromPractice = useCallback(async (reports: PracticeItemReport[]) => {
+    if (!session?.username || !generatedQuestionPointId || reports.length === 0) return false;
+    const events = reports.map((item) => ({
+      knowledge_point_id: generatedQuestionPointId,
+      source_type: "question_practice",
+      source_id: item.question_id,
+      score: item.score,
+      max_score: item.max_score,
+      is_correct: item.status === "correct" ? true : item.status === "incorrect" ? false : null,
+      difficulty: questionState.difficulty,
+      answer_quality: item.status === "partial" ? "partial" : undefined,
+      note: "课程知识点出题练习自动更新掌握度",
+    }));
+    const res = await fetch(apiUrl("/api/v1/courses/knowledge-points/mastery-events/batch"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        student_username: session.username,
+        events,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "掌握度更新失败");
+    return true;
+  }, [generatedQuestionPointId, questionState.difficulty, session?.username]);
+
   const gradePractice = useCallback(async () => {
     if (questionState.results.length === 0) {
       setMessage("当前没有可评分的题目。");
@@ -1187,13 +1488,14 @@ export default function AssignmentReviewWorkspace() {
         reportItems.reduce((acc, _, idx) => ({ ...acc, [idx]: true }), {} as Record<number, boolean>),
       );
       await syncWrongbookFromPractice(reportItems);
-      setMessage("练习已评分并同步错题本。");
+      const masterySynced = await syncMasteryFromPractice(reportItems);
+      setMessage(masterySynced ? "练习已评分，并同步错题本与知识点掌握度。" : "练习已评分并同步错题本。");
     } catch (e: any) {
       setMessage(e.message || "评分失败，请稍后重试。");
     } finally {
       setGradingPractice(false);
     }
-  }, [answers, questionState.results, syncWrongbookFromPractice]);
+  }, [answers, questionState.results, syncMasteryFromPractice, syncWrongbookFromPractice]);
 
   useEffect(() => {
     if (!isResult || practiceMode !== "exam" || !timerRunning || gradingPractice || !!practiceReport) return;
@@ -1288,8 +1590,91 @@ export default function AssignmentReviewWorkspace() {
 
       {!isAssignmentMode && isConfigMode && (
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1 text-sm">
+            <button
+              onClick={() => setQuestionSourceMode("manual")}
+              className={`rounded-lg px-3 py-1.5 ${
+                questionSourceMode === "manual" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-600"
+              }`}
+            >
+              手动知识点
+            </button>
+            <button
+              onClick={() => setQuestionSourceMode("course")}
+              className={`rounded-lg px-3 py-1.5 ${
+                questionSourceMode === "course" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-600"
+              }`}
+            >
+              课程知识点
+            </button>
+          </div>
+
+          {questionSourceMode === "course" && (
+            <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+              <div className="grid gap-3 md:grid-cols-[1fr_1.4fr]">
+                <select
+                  value={selectedQuestionCourseId ?? ""}
+                  onChange={(e) => setSelectedQuestionCourseId(Number(e.target.value) || null)}
+                  className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm"
+                >
+                  {courseOptions.length === 0 ? (
+                    <option value="">暂无课程</option>
+                  ) : (
+                    courseOptions.map((course) => (
+                      <option key={course.id} value={course.id}>
+                        {course.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <select
+                  value={selectedQuestionPointId ?? ""}
+                  onChange={(e) => {
+                    const pointId = Number(e.target.value) || null;
+                    setSelectedQuestionPointId(pointId);
+                    const point = coursePoints.find((item) => item.id === pointId);
+                    if (point) {
+                      setQuestionState((prev) => ({ ...prev, topic: point.name }));
+                    }
+                  }}
+                  className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm"
+                >
+                  {coursePoints.length === 0 ? (
+                    <option value="">暂无知识点</option>
+                  ) : (
+                    coursePoints.map((point) => (
+                      <option key={point.id} value={point.id}>
+                        {point.chapter_title ? `${point.chapter_title} / ` : ""}
+                        {point.name}
+                        {point.is_confirmed ? "" : "（待确认）"}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-[1fr_220px]">
+                <div className="rounded-lg bg-white/80 px-3 py-2 text-sm text-slate-600">
+                  {selectedCoursePoint
+                    ? `${selectedCoursePoint.description || "该知识点暂无说明"}`
+                    : "从课程中心选择知识点后，系统会按它生成题目并在评分后更新掌握度。"}
+                </div>
+                <div className="rounded-lg bg-white/80 px-3 py-2 text-sm text-slate-600">
+                  资料来源：{selectedCoursePointSourceName || questionState.selectedKb || "未选择"}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid gap-3 md:grid-cols-2">
-            <input value={questionState.topic} onChange={(e) => setQuestionState((p) => ({ ...p, topic: e.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2" placeholder="知识点/主题" />
+            <input
+              value={questionState.topic}
+              onChange={(e) => {
+                setQuestionSourceMode("manual");
+                setQuestionState((p) => ({ ...p, topic: e.target.value }));
+              }}
+              className="rounded-xl border border-slate-200 px-3 py-2"
+              placeholder="知识点/主题"
+            />
             <select value={questionState.selectedKb} onChange={(e) => setQuestionState((p) => ({ ...p, selectedKb: e.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2">{kbs.map((kb) => <option key={kb} value={kb}>{kb}</option>)}</select>
             <select value={questionState.type} onChange={(e) => setQuestionState((p) => ({ ...p, type: e.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2">
               <option value="choice">单选题</option>
@@ -1332,7 +1717,14 @@ export default function AssignmentReviewWorkspace() {
               disabled={practiceMode !== "exam"}
             />
           </div>
-          <button onClick={startCustom} disabled={!canStartCustom} className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-white disabled:opacity-50"><Sparkles className="h-4 w-4" />开始生成</button>
+          <button
+            onClick={questionSourceMode === "course" ? startCoursePointQuestion : startCustom}
+            disabled={questionSourceMode === "course" ? !selectedCoursePoint : !canStartCustom}
+            className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-white disabled:opacity-50"
+          >
+            <Sparkles className="h-4 w-4" />
+            {questionSourceMode === "course" ? "按课程知识点生成" : "开始生成"}
+          </button>
         </div>
       )}
 
@@ -1433,7 +1825,9 @@ export default function AssignmentReviewWorkspace() {
               String(currentQuestion.question.question_type || "").toLowerCase() === "true_false") &&
               currentQuestion.question.options && (
               <div className="mt-3 space-y-2 text-sm">
-                {Object.entries(currentQuestion.question.options).map(([key, value]) => (
+                {Object.entries(
+                  currentQuestion.question.options as Record<string, string | number | boolean>,
+                ).map(([key, value]) => (
                   <label key={key} className="flex items-start gap-2 rounded-lg border border-slate-200 p-2">
                     <input
                       type={
@@ -1459,7 +1853,7 @@ export default function AssignmentReviewWorkspace() {
                         }
                       }}
                     />
-                    <span className="text-slate-700">{key}. {value}</span>
+                    <span className="text-slate-700">{key}. {String(value)}</span>
                   </label>
                 ))}
               </div>
@@ -1579,7 +1973,7 @@ export default function AssignmentReviewWorkspace() {
               <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/70 p-3">
                 <p className="text-sm font-medium text-indigo-800">题目溯源</p>
                 <div className="mt-2 space-y-2 text-xs text-indigo-900">
-                  {currentQuestion.question.source_refs.map((ref) => (
+                  {(currentQuestion.question.source_refs as QuestionSourceRef[]).map((ref: QuestionSourceRef) => (
                     <div key={ref.id} className="rounded-lg bg-white/90 p-2">
                       <p className="font-medium">检索点：{ref.query}</p>
                       <p className="mt-1 whitespace-pre-wrap text-indigo-800">{ref.snippet}</p>
@@ -1651,6 +2045,33 @@ export default function AssignmentReviewWorkspace() {
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
               <h3 className="mb-3 text-base font-semibold text-slate-900">创建作业草稿</h3>
               <div className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <select
+                    value={assignmentCourseId ?? ""}
+                    onChange={(e) => setAssignmentCourseId(Number(e.target.value) || null)}
+                    className="rounded-xl border border-slate-200 px-3 py-2"
+                  >
+                    <option value="">不关联课程</option>
+                    {assignmentCourseOptions.map((course) => (
+                      <option key={course.id} value={course.id}>
+                        {course.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={assignmentChapterId ?? ""}
+                    onChange={(e) => setAssignmentChapterId(Number(e.target.value) || null)}
+                    className="rounded-xl border border-slate-200 px-3 py-2"
+                    disabled={!assignmentCourseId}
+                  >
+                    <option value="">不限定章节</option>
+                    {assignmentChapters.map((chapter) => (
+                      <option key={chapter.id} value={chapter.id}>
+                        {chapter.order_index}. {chapter.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="作业标题（必填）" />
                 <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="h-24 w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="作业说明（可选）" />
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3">
@@ -1700,7 +2121,39 @@ export default function AssignmentReviewWorkspace() {
               {teacherAssignments.length === 0 ? <p className="text-sm text-slate-500">暂无作业草稿，请先创建。</p> : (
                 <div className="space-y-3">{teacherAssignments.map((item) => (
                   <div key={item.id} className="rounded-xl border border-slate-200 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium text-slate-900">{item.title}</p><p className="text-xs text-slate-500">创建时间：{formatTime(item.created_at)}</p></div><span className={`rounded-full px-3 py-1 text-xs ${item.confirmed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{item.confirmed ? "已发布" : "草稿"}</span></div>
+                    <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium text-slate-900">{item.title}</p><p className="text-xs text-slate-500">创建时间：{formatTime(item.created_at)} · {item.course_name || "未关联课程"}{item.chapter_title ? ` / ${item.chapter_title}` : ""}</p></div><span className={`rounded-full px-3 py-1 text-xs ${item.confirmed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{item.confirmed ? "已发布" : "草稿"}</span></div>
+                    <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+                      <p className="font-medium text-slate-700">关联知识点</p>
+                      {(item.knowledge_links || []).length === 0 ? (
+                        <p className="mt-1">暂未匹配到已有知识点。</p>
+                      ) : (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(item.knowledge_links || []).map((link) => (
+                            <span key={link.knowledge_point_id} className="rounded-full bg-white px-2 py-1 text-indigo-700">
+                              {link.knowledge_point}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {(item.knowledge_candidates || []).filter((candidate) => candidate.status !== "confirmed").length > 0 && (
+                        <div className="mt-3">
+                          <p className="font-medium text-amber-700">待确认候选知识点</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(item.knowledge_candidates || [])
+                              .filter((candidate) => candidate.status !== "confirmed")
+                              .map((candidate) => (
+                                <button
+                                  key={candidate.candidate_id}
+                                  onClick={() => confirmAssignmentCandidate(item, candidate)}
+                                  className="rounded-full border border-amber-200 bg-white px-2 py-1 text-amber-700 hover:bg-amber-50"
+                                >
+                                  + {candidate.name}
+                                </button>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     {!item.confirmed && <div className="mt-3 flex flex-wrap items-center gap-3"><label className="inline-flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={!!publishChecks[item.id]} onChange={(e) => setPublishChecks((prev) => ({ ...prev, [item.id]: e.target.checked }))} />我确认该作业可以发布给学生</label><button onClick={() => publishAssignment(item.id)} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700"><CheckCircle2 className="h-4 w-4" />确认发布</button></div>}
                   </div>
                 ))}</div>
@@ -1744,6 +2197,22 @@ export default function AssignmentReviewWorkspace() {
                         <button onClick={() => exportSubmissionReport(sub, "csv")} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">导出CSV</button>
                       </div>
                       <div className="mt-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{sub.answer_text || "学生未填写文本答案（可能仅上传附件）。"}</div>
+                      {sub.auto_review?.knowledge_results && sub.auto_review.knowledge_results.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                          <p className="text-sm font-medium text-indigo-800">知识点自动评审</p>
+                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                            {sub.auto_review.knowledge_results.map((result) => (
+                              <div key={`${sub.id}-${result.knowledge_point_id || result.knowledge_point}`} className="rounded-lg bg-white p-2 text-xs text-slate-700">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium text-slate-900">{result.knowledge_point}</span>
+                                  <span>{Math.round(result.score_ratio * 100)}%</span>
+                                </div>
+                                <p className="mt-1">{result.feedback}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <div className="mt-3 grid gap-3 md:grid-cols-[140px_1fr]"><input value={draft.totalScore} onChange={(e) => updateDraft(sub.id, (c) => ({ ...c, totalScore: e.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2" placeholder="总分 0-100" /><textarea value={draft.feedback} onChange={(e) => updateDraft(sub.id, (c) => ({ ...c, feedback: e.target.value }))} className="h-20 rounded-xl border border-slate-200 px-3 py-2" placeholder="总体评语" /></div>
                       <div className="mt-3 rounded-xl border border-slate-200 p-3"><p className="mb-2 text-sm font-medium text-slate-700">Rubric 维度评分</p><div className="space-y-2">{draft.rubricScores.map((r, idx) => <div key={`${sub.id}-rubric-${idx}`} className="grid gap-2 md:grid-cols-[1fr_120px_1fr]"><input value={r.name} readOnly className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" /><input value={r.score} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.rubricScores]; next[idx]={...next[idx],score:e.target.value}; return {...c,rubricScores:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder={`/${r.max_score}`} /><input value={r.comment} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.rubricScores]; next[idx]={...next[idx],comment:e.target.value}; return {...c,rubricScores:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="该维度评语" /></div>)}</div></div>
                       <div className="mt-3 rounded-xl border border-slate-200 p-3"><div className="mb-2 flex items-center justify-between"><p className="text-sm font-medium text-slate-700">结构化错题项（可选）</p><button onClick={() => updateDraft(sub.id, (c) => ({ ...c, wrongbookItems: [...c.wrongbookItems, { feedback: "", error_type: "", knowledge_point: "", suggestion: "" }] }))} className="text-xs text-indigo-600 hover:text-indigo-700">+ 新增错题项</button></div><div className="space-y-2">{draft.wrongbookItems.map((w, idx) => <div key={`${sub.id}-wrong-${idx}`} className="rounded-lg border border-slate-200 p-2"><div className="grid gap-2 md:grid-cols-2"><input value={w.error_type} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.wrongbookItems]; next[idx]={...next[idx],error_type:e.target.value}; return {...c,wrongbookItems:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="错误类型" /><input value={w.knowledge_point} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.wrongbookItems]; next[idx]={...next[idx],knowledge_point:e.target.value}; return {...c,wrongbookItems:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="知识点" /><input value={w.feedback} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.wrongbookItems]; next[idx]={...next[idx],feedback:e.target.value}; return {...c,wrongbookItems:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-2" placeholder="问题反馈" /><input value={w.suggestion} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.wrongbookItems]; next[idx]={...next[idx],suggestion:e.target.value}; return {...c,wrongbookItems:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-2" placeholder="改进建议" /></div></div>)}</div></div>
@@ -1784,6 +2253,15 @@ export default function AssignmentReviewWorkspace() {
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
                   <p className="font-medium text-slate-900">{selectedAssignment.title}</p>
                   <p className="mt-1 text-slate-600">{selectedAssignment.description || "暂无说明"}</p>
+                  {(selectedAssignment.knowledge_links || []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      {(selectedAssignment.knowledge_links || []).map((link) => (
+                        <span key={link.knowledge_point_id} className="rounded-full bg-white px-2 py-1 text-indigo-700">
+                          {link.knowledge_point}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <textarea value={submissionText} onChange={(e) => setSubmissionText(e.target.value)} className="h-28 w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="请输入作答内容（可选）" />
                 <div>
@@ -1851,6 +2329,22 @@ export default function AssignmentReviewWorkspace() {
                           相关性：{sub.auto_review.relevance_score} 分 · 参考总分：{sub.auto_review.total_score}
                         </p>
                         <p className="mt-1 text-indigo-800">{sub.auto_review.summary}</p>
+                        {sub.auto_review.knowledge_results && sub.auto_review.knowledge_results.length > 0 && (
+                          <div className="mt-3">
+                            <p className="font-medium text-indigo-900">知识点表现</p>
+                            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                              {sub.auto_review.knowledge_results.map((result) => (
+                                <div key={`${sub.id}-kp-${result.knowledge_point_id || result.knowledge_point}`} className="rounded-lg bg-white/80 p-2 text-xs text-indigo-900">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium">{result.knowledge_point}</span>
+                                    <span>{Math.round(result.score_ratio * 100)}%</span>
+                                  </div>
+                                  <p className="mt-1">{result.feedback}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {sub.auto_review.errors && sub.auto_review.errors.length > 0 && (
                           <div className="mt-2">
                             <p className="font-medium text-indigo-900">识别到的问题</p>

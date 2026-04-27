@@ -49,6 +49,7 @@ import {
 import { apiUrl, wsUrl } from "@/lib/api";
 import { useGlobal } from "@/context/GlobalContext";
 import { useTranslation } from "react-i18next";
+import CourseKnowledgePanel from "@/components/knowledge/CourseKnowledgePanel";
 
 interface ProgressInfo {
   stage: string;
@@ -951,15 +952,17 @@ export default function KnowledgePage() {
 
   return (
     <div className="animate-fade-in min-h-[calc(100vh-7rem)] overflow-y-auto p-2 md:p-4">
-      {/* Header */}
+      <CourseKnowledgePanel />
+
+      {/* Underlying RAG management */}
       <div className="flex justify-between items-end mb-8">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-3">
             <BookOpen className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-            {t("Knowledge Bases")}
+            底层知识库 / RAG 管理
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-2">
-            {t("Manage and explore your educational content repositories.")}
+            这里保留原有知识库能力，课程资料会在课程中心里自动关联到课程和章节。
           </p>
         </div>
         <div className="flex gap-3">
@@ -984,7 +987,7 @@ export default function KnowledgePage() {
             className="bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-800 dark:hover:bg-slate-200 transition-colors flex items-center gap-2 shadow-lg shadow-slate-900/20"
           >
             <Plus className="w-4 h-4" />
-            {t("New Knowledge Base")}
+            新建底层知识库
           </button>
         </div>
       </div>

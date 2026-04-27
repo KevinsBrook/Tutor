@@ -70,6 +70,13 @@ class AssignmentReviewStore:
         rubric_items: list[dict[str, Any]],
         files: list[dict[str, Any]],
         assignment_id: str | None = None,
+        course_id: int | None = None,
+        chapter_id: int | None = None,
+        course_name: str = "",
+        chapter_title: str = "",
+        knowledge_links: list[dict[str, Any]] | None = None,
+        knowledge_candidates: list[dict[str, Any]] | None = None,
+        analysis: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             payload = self._read_json_file(self.paths.assignments_file)
@@ -80,8 +87,15 @@ class AssignmentReviewStore:
                 "teacher_username": teacher_username,
                 "title": title,
                 "description": description,
+                "course_id": course_id,
+                "chapter_id": chapter_id,
+                "course_name": course_name,
+                "chapter_title": chapter_title,
                 "rubric_items": rubric_items,
                 "files": files,
+                "knowledge_links": knowledge_links or [],
+                "knowledge_candidates": knowledge_candidates or [],
+                "analysis": analysis or {},
                 "status": "draft",
                 "confirmed": False,
                 "created_at": time.time(),
@@ -91,6 +105,30 @@ class AssignmentReviewStore:
             payload["assignments"] = assignments
             self._write_json_file(self.paths.assignments_file, payload)
             return assignment
+
+    def update_assignment_fields(
+        self,
+        assignment_id: str,
+        teacher_username: str,
+        fields: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            payload = self._read_json_file(self.paths.assignments_file)
+            assignments = payload.get("assignments", [])
+            updated = None
+            for assignment in assignments:
+                if assignment.get("id") != assignment_id:
+                    continue
+                if assignment.get("teacher_username") != teacher_username:
+                    return None
+                assignment.update(fields)
+                assignment["updated_at"] = time.time()
+                updated = assignment
+                break
+            if updated:
+                payload["assignments"] = assignments
+                self._write_json_file(self.paths.assignments_file, payload)
+            return updated
 
     def get_assignment_by_id(self, assignment_id: str) -> dict[str, Any] | None:
         payload = self._read_json_file(self.paths.assignments_file)
@@ -175,6 +213,9 @@ class AssignmentReviewStore:
             assignment = assignment_map.get(submission.get("assignment_id"), {})
             enriched["assignment_title"] = assignment.get("title", "")
             enriched["assignment_rubric_items"] = assignment.get("rubric_items", [])
+            enriched["assignment_knowledge_links"] = assignment.get("knowledge_links", [])
+            enriched["assignment_course_id"] = assignment.get("course_id")
+            enriched["assignment_course_name"] = assignment.get("course_name", "")
             filtered.append(enriched)
         return filtered
 
@@ -199,9 +240,33 @@ class AssignmentReviewStore:
             assignment = assignment_map.get(assignment_id, {})
             enriched["assignment_title"] = assignment.get("title", "")
             enriched["assignment_rubric_items"] = assignment.get("rubric_items", [])
+            enriched["assignment_knowledge_links"] = assignment.get("knowledge_links", [])
+            enriched["assignment_course_id"] = assignment.get("course_id")
+            enriched["assignment_course_name"] = assignment.get("course_name", "")
             filtered.append(enriched)
         filtered.sort(key=lambda x: x.get("created_at", 0), reverse=True)
         return filtered
+
+    def update_submission_auto_review(
+        self,
+        submission_id: str,
+        auto_review: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            payload = self._read_json_file(self.paths.submissions_file)
+            submissions = payload.get("submissions", [])
+            updated = None
+            for submission in submissions:
+                if submission.get("id") != submission_id:
+                    continue
+                submission["auto_review"] = auto_review
+                submission["updated_at"] = time.time()
+                updated = submission
+                break
+            if updated:
+                payload["submissions"] = submissions
+                self._write_json_file(self.paths.submissions_file, payload)
+            return updated
 
     def review_submission(
         self,
@@ -298,6 +363,7 @@ class AssignmentReviewStore:
                         "feedback": item.get("feedback", feedback),
                         "error_type": item.get("error_type", ""),
                         "knowledge_point": item.get("knowledge_point", ""),
+                        "knowledge_point_id": item.get("knowledge_point_id"),
                         "suggestion": item.get("suggestion", ""),
                         "source_submission_id": submission_id,
                         "practice_history": [],
@@ -353,6 +419,7 @@ class AssignmentReviewStore:
         feedback: str,
         error_type: str = "",
         knowledge_point: str = "",
+        knowledge_point_id: int | None = None,
         suggestion: str = "",
         source_submission_id: str = "",
     ) -> dict[str, Any]:
@@ -367,6 +434,7 @@ class AssignmentReviewStore:
                 "feedback": feedback,
                 "error_type": error_type,
                 "knowledge_point": knowledge_point,
+                "knowledge_point_id": knowledge_point_id,
                 "suggestion": suggestion,
                 "source_submission_id": source_submission_id,
                 "practice_history": [],

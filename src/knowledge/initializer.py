@@ -200,8 +200,8 @@ class KnowledgeBaseInitializer:
         self.progress_tracker.update(
             ProgressStage.PROCESSING_DOCUMENTS,
             f"Starting to process documents with {provider} provider...",
-            current=0,
-            total=0,
+            current=1,
+            total=5,
         )
 
         # Get all documents in raw directory based on provider's supported extensions
@@ -221,8 +221,8 @@ class KnowledgeBaseInitializer:
         self.progress_tracker.update(
             ProgressStage.PROCESSING_DOCUMENTS,
             f"Found {len(doc_files)} documents, starting to process...",
-            current=0,
-            total=len(doc_files),
+            current=2,
+            total=5,
         )
 
         # Initialize RAGService with the selected provider
@@ -238,6 +238,12 @@ class KnowledgeBaseInitializer:
         process_success = False
 
         try:
+            self.progress_tracker.update(
+                ProgressStage.PROCESSING_FILE,
+                f"Parsing and indexing {len(file_paths)} documents with {provider}...",
+                current=3,
+                total=5,
+            )
             # Process all documents using the RAGService
             success = await rag_service.initialize(
                 kb_name=self.kb_name,
@@ -254,8 +260,8 @@ class KnowledgeBaseInitializer:
                 self.progress_tracker.update(
                     ProgressStage.PROCESSING_DOCUMENTS,
                     "Documents processed successfully",
-                    current=len(doc_files),
-                    total=len(doc_files),
+                    current=4,
+                    total=5,
                 )
                 process_success = True
             else:

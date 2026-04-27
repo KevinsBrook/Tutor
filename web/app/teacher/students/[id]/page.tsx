@@ -3,46 +3,45 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8001";
+import { useAuth } from "@/context/AuthContext";
+import { apiUrl } from "@/lib/api";
 
 export default function TeacherStudentDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const { session, profile, isReady } = useAuth();
   const studentId = params.id;
 
   const [student, setStudent] = useState<any>(null);
   const [scores, setScores] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [teacherUser, setTeacherUser] = useState<any>(null);
   const [scoreForm, setScoreForm] = useState({
     assignment_no: "",
     assignment_title: "",
     score: "",
     feedback: "",
   });
-const [submittingScore, setSubmittingScore] = useState(false);
+  const [submittingScore, setSubmittingScore] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
+      if (!isReady) return;
+
       try {
-        const storedUser = localStorage.getItem("auth_user");
-        if (!storedUser) {
+        if (!session) {
           alert("请先登录");
-          router.push("/login");
+          router.replace("/login");
           return;
         }
 
-        const parsedUser = JSON.parse(storedUser);
-        if (parsedUser.role !== "teacher") {
+        if (session.role !== "teacher") {
           alert("当前账号不是教师账号");
-          router.push("/login");
+          router.replace("/login");
           return;
         }
-        setTeacherUser(parsedUser);
 
         const detailRes = await fetch(
-          `${API_BASE}/api/v1/teacher/students/${studentId}`
+          apiUrl(`/api/v1/teacher/students/${studentId}`),
         );
         const detailData = await detailRes.json();
         if (!detailRes.ok) {
@@ -51,7 +50,7 @@ const [submittingScore, setSubmittingScore] = useState(false);
         setStudent(detailData.student);
 
         const scoreRes = await fetch(
-          `${API_BASE}/api/v1/teacher/students/${studentId}/scores`
+          apiUrl(`/api/v1/teacher/students/${studentId}/scores`),
         );
         const scoreData = await scoreRes.json();
         if (!scoreRes.ok) {
@@ -68,7 +67,7 @@ const [submittingScore, setSubmittingScore] = useState(false);
     if (studentId) {
       loadData();
     }
-  }, [studentId, router]);
+  }, [isReady, router, session, studentId]);
 
   if (loading) {
     return <div className="p-8">加载中...</div>;
@@ -79,7 +78,7 @@ const [submittingScore, setSubmittingScore] = useState(false);
       return;
     }
   
-    if (!teacherUser) {
+    if (!profile?.id) {
       alert("教师信息未加载完成");
       return;
     }
@@ -92,10 +91,7 @@ const [submittingScore, setSubmittingScore] = useState(false);
     try {
       setSubmittingScore(true);
   
-      const teacherProfileRaw = localStorage.getItem("auth_profile");
-      const teacherProfile = teacherProfileRaw ? JSON.parse(teacherProfileRaw) : null;
-  
-      const res = await fetch(`${API_BASE}/api/v1/teacher/scores/add`, {
+      const res = await fetch(apiUrl("/api/v1/teacher/scores/add"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -106,7 +102,7 @@ const [submittingScore, setSubmittingScore] = useState(false);
           assignment_title: scoreForm.assignment_title || null,
           score: Number(scoreForm.score),
           feedback: scoreForm.feedback || null,
-          graded_by: teacherProfile?.id || 1,
+          graded_by: profile.id,
         }),
       });
   
@@ -127,7 +123,7 @@ const [submittingScore, setSubmittingScore] = useState(false);
   
       // 重新拉取成绩列表
       const scoreRes = await fetch(
-        `${API_BASE}/api/v1/teacher/students/${studentId}/scores`,
+        apiUrl(`/api/v1/teacher/students/${studentId}/scores`),
       );
       const scoreData = await scoreRes.json();
       if (!scoreRes.ok) {

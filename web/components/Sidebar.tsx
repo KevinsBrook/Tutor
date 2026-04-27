@@ -1,29 +1,31 @@
-﻿"use client";
+"use client";
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useTranslation } from "react-i18next";
 import {
-  Home,
-  History,
-  BookOpen,
-  PenTool,
-  Calculator,
-  Microscope,
-  Edit3,
-  Settings,
+  BarChart3,
   Book,
-  GraduationCap,
-  Lightbulb,
-  Menu,
-  X,
+  BookOpen,
+  Calculator,
   CircleOff,
-  User,
+  Edit3,
+  GraduationCap,
+  History,
+  Home,
+  Lightbulb,
   LucideIcon,
+  Menu,
+  MessageCircle,
+  Microscope,
+  PenTool,
+  Settings,
+  User,
+  X,
 } from "lucide-react";
-import { useGlobal } from "@/context/GlobalContext";
+
 import { useAuth } from "@/context/AuthContext";
+import { useGlobal } from "@/context/GlobalContext";
 
 interface NavItem {
   name: string;
@@ -31,21 +33,31 @@ interface NavItem {
   icon: LucideIcon;
 }
 
-const ALL_NAV_ITEMS: Record<string, { icon: LucideIcon; nameKey: string }> = {
-  "/": { icon: Home, nameKey: "Home" },
-  "/student": { icon: User, nameKey: "学生端" },
-  "/teacher": { icon: GraduationCap, nameKey: "教师端" },
-  "/history": { icon: History, nameKey: "History" },
-  "/knowledge": { icon: BookOpen, nameKey: "Knowledge Bases" },
-  "/notebook": { icon: Book, nameKey: "Notebooks" },
-  "/question": { icon: PenTool, nameKey: "Question Generator" },
-  "/solver": { icon: Calculator, nameKey: "Smart Solver" },
-  "/guide": { icon: GraduationCap, nameKey: "Guided Learning" },
-  "/ideagen": { icon: Lightbulb, nameKey: "IdeaGen" },
-  "/research": { icon: Microscope, nameKey: "Deep Research" },
-  "/co_writer": { icon: Edit3, nameKey: "Co-Writer" },
-  "/wrongbook": { icon: CircleOff, nameKey: "错题本" },
+const ALL_NAV_ITEMS: Record<string, { icon: LucideIcon; name: string }> = {
+  "/": { icon: Home, name: "首页" },
+  "/chat": { icon: MessageCircle, name: "智能问答" },
+  "/student": { icon: User, name: "学生端" },
+  "/teacher": { icon: GraduationCap, name: "教师端" },
+  "/history": { icon: History, name: "历史记录" },
+  "/knowledge": { icon: BookOpen, name: "课程中心" },
+  "/notebook": { icon: Book, name: "学习笔记" },
+  "/question": { icon: PenTool, name: "题目生成" },
+  "/mastery": { icon: BarChart3, name: "知识点掌握" },
+  "/solver": { icon: Calculator, name: "智能求解" },
+  "/guide": { icon: GraduationCap, name: "引导学习" },
+  "/ideagen": { icon: Lightbulb, name: "创意生成" },
+  "/research": { icon: Microscope, name: "深度研究" },
+  "/co_writer": { icon: Edit3, name: "协同写作" },
+  "/wrongbook": { icon: CircleOff, name: "错题本" },
 };
+
+const HIDDEN_NAV_HREFS = new Set([
+  "/solver",
+  "/guide",
+  "/ideagen",
+  "/research",
+  "/co_writer",
+]);
 
 function NavLink({
   item,
@@ -78,47 +90,52 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { sidebarNavOrder } = useGlobal();
   const { session, logout } = useAuth();
-  const { t } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const navGroups = useMemo(() => {
     const buildNavItems = (hrefs: string[]): NavItem[] => {
       return hrefs
-        .filter((href) => ALL_NAV_ITEMS[href])
+        .filter((href) => ALL_NAV_ITEMS[href] && !HIDDEN_NAV_HREFS.has(href))
         .map((href) => ({
-          name: t(ALL_NAV_ITEMS[href].nameKey),
+          name: ALL_NAV_ITEMS[href].name,
           href,
           icon: ALL_NAV_ITEMS[href].icon,
         }));
     };
-  
+
     const roleItems: NavItem[] =
       session?.role === "teacher"
-        ? [
-            {
-              name: "教师端",
-              href: "/teacher",
-              icon: ALL_NAV_ITEMS["/teacher"].icon,
-            },
-          ]
+        ? [{ name: "教师端", href: "/teacher", icon: ALL_NAV_ITEMS["/teacher"].icon }]
         : session?.role === "student"
-          ? [
-              {
-                name: "学生端",
-                href: "/student",
-                icon: ALL_NAV_ITEMS["/student"].icon,
-              },
-            ]
+          ? [{ name: "学生端", href: "/student", icon: ALL_NAV_ITEMS["/student"].icon }]
           : [];
-  
+
     const start = buildNavItems(
       sidebarNavOrder.start.filter((href) => href !== "/student" && href !== "/teacher"),
     );
-  
+
+    if (!start.find((item) => item.href === "/chat")) {
+      const homeIndex = start.findIndex((item) => item.href === "/");
+      start.splice(homeIndex >= 0 ? homeIndex + 1 : 0, 0, {
+        name: "智能问答",
+        href: "/chat",
+        icon: ALL_NAV_ITEMS["/chat"].icon,
+      });
+    }
+
     const learnResearch = buildNavItems(
       sidebarNavOrder.learnResearch.filter((href) => href !== "/student" && href !== "/teacher"),
     );
-  
+
+    if (!learnResearch.find((item) => item.href === "/mastery")) {
+      const questionIndex = learnResearch.findIndex((item) => item.href === "/question");
+      learnResearch.splice(questionIndex >= 0 ? questionIndex + 1 : 0, 0, {
+        name: ALL_NAV_ITEMS["/mastery"].name,
+        href: "/mastery",
+        icon: ALL_NAV_ITEMS["/mastery"].icon,
+      });
+    }
+
     if (session?.role === "student" && !learnResearch.find((item) => item.href === "/wrongbook")) {
       learnResearch.unshift({
         name: "错题本",
@@ -126,9 +143,11 @@ export default function Sidebar() {
         icon: ALL_NAV_ITEMS["/wrongbook"].icon,
       });
     }
-  
+
     return { roleItems, start, learnResearch };
-  }, [session?.role, sidebarNavOrder, t]);
+  }, [session?.role, sidebarNavOrder]);
+
+  const userRoleLabel = session?.role === "teacher" ? "教师" : "学生";
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/40 bg-[color:var(--ui-panel)]/95 backdrop-blur-xl">
@@ -140,9 +159,7 @@ export default function Sidebar() {
             <NavLink key={item.href} item={item} isActive={pathname === item.href} />
           ))}
 
-          {navGroups.roleItems.length > 0 && (
-            <div className="mx-1 h-6 w-px bg-slate-200" />
-          )}
+          {navGroups.roleItems.length > 0 && <div className="mx-1 h-6 w-px bg-slate-200" />}
 
           {navGroups.start.map((item) => (
             <NavLink key={item.href} item={item} isActive={pathname === item.href} />
@@ -157,7 +174,7 @@ export default function Sidebar() {
 
         <div className="hidden items-center gap-2 md:flex">
           <div className="rounded-xl border border-slate-200 bg-white/65 px-3 py-2 text-xs text-slate-700">
-            {session?.role === "teacher" ? "教师" : "学生"}：{session?.username}
+            {userRoleLabel}：{session?.username}
           </div>
           <Link
             href="/settings"
@@ -180,9 +197,9 @@ export default function Sidebar() {
         </div>
 
         <button
-          onClick={() => setMobileOpen((v) => !v)}
+          onClick={() => setMobileOpen((value) => !value)}
           className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-700 lg:hidden"
-          aria-label={mobileOpen ? "关闭" : "菜单"}
+          aria-label={mobileOpen ? "关闭菜单" : "打开菜单"}
         >
           {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
@@ -191,7 +208,7 @@ export default function Sidebar() {
       {mobileOpen && (
         <div className="border-t border-white/60 bg-white/95 p-3 shadow-lg backdrop-blur-xl lg:hidden">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {[...navGroups.roleItems, ...navGroups.start, ...navGroups.learnResearch].map((item) => (
+            {[...navGroups.roleItems, ...navGroups.start, ...navGroups.learnResearch].map((item) => (
               <NavLink
                 key={item.href}
                 item={item}

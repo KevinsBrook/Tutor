@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -13,7 +14,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from src.core.database import Base
-from sqlalchemy import Boolean
 
 
 class User(Base):
@@ -50,6 +50,9 @@ class Student(Base):
 
     user = relationship("User", back_populates="student")
     scores = relationship("AssignmentScore", back_populates="student")
+    uploaded_materials = relationship("CourseMaterial", back_populates="student_uploader")
+    mastery_records = relationship("StudentKnowledgeMastery", back_populates="student")
+    mastery_events = relationship("KnowledgeMasteryEvent", back_populates="student")
 
 
 class Teacher(Base):
@@ -64,6 +67,173 @@ class Teacher(Base):
 
     user = relationship("User", back_populates="teacher")
     graded_scores = relationship("AssignmentScore", back_populates="grader")
+    courses = relationship("Course", back_populates="teacher")
+    created_knowledge_points = relationship("KnowledgePoint", back_populates="creator_teacher")
+
+
+class Course(Base):
+    __tablename__ = "courses"
+    __table_args__ = (
+        UniqueConstraint("teacher_id", "name", name="uq_teacher_course_name"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=False, index=True)
+    name = Column(String(200), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(30), default="active", nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    teacher = relationship("Teacher", back_populates="courses")
+    chapters = relationship(
+        "CourseChapter",
+        back_populates="course",
+        cascade="all, delete-orphan",
+        order_by="CourseChapter.order_index",
+    )
+    materials = relationship("CourseMaterial", back_populates="course")
+    knowledge_points = relationship("KnowledgePoint", back_populates="course")
+
+
+class CourseChapter(Base):
+    __tablename__ = "course_chapters"
+    __table_args__ = (
+        UniqueConstraint("course_id", "order_index", name="uq_course_chapter_order"),
+        UniqueConstraint("course_id", "title", name="uq_course_chapter_title"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    order_index = Column(Integer, default=1, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    course = relationship("Course", back_populates="chapters")
+    materials = relationship("CourseMaterial", back_populates="chapter")
+    knowledge_points = relationship("KnowledgePoint", back_populates="chapter")
+
+
+class CourseMaterial(Base):
+    __tablename__ = "course_materials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    chapter_id = Column(Integer, ForeignKey("course_chapters.id"), nullable=True, index=True)
+    uploader_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    student_uploader_id = Column(Integer, ForeignKey("students.id"), nullable=True, index=True)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    source_type = Column(String(40), nullable=False, index=True)
+    original_filename = Column(String(255), nullable=True)
+    file_path = Column(String(500), nullable=True)
+    file_type = Column(String(50), nullable=True)
+    kb_name = Column(String(200), nullable=True, index=True)
+    rag_provider = Column(String(80), nullable=True)
+    parse_status = Column(String(40), default="pending", nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    course = relationship("Course", back_populates="materials")
+    chapter = relationship("CourseChapter", back_populates="materials")
+    uploader = relationship("User")
+    student_uploader = relationship("Student", back_populates="uploaded_materials")
+    knowledge_points = relationship("KnowledgePoint", back_populates="source_material")
+
+
+class KnowledgePoint(Base):
+    __tablename__ = "knowledge_points"
+    __table_args__ = (
+        UniqueConstraint("course_id", "chapter_id", "name", name="uq_course_chapter_kp_name"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    chapter_id = Column(Integer, ForeignKey("course_chapters.id"), nullable=True, index=True)
+    source_material_id = Column(Integer, ForeignKey("course_materials.id"), nullable=True, index=True)
+    created_by_teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True, index=True)
+    name = Column(String(200), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    priority = Column(Integer, default=3, nullable=False, index=True)
+    source_type = Column(String(40), default="teacher_material", nullable=False, index=True)
+    source_ref = Column(Text, nullable=True)
+    is_confirmed = Column(Boolean, default=False, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    course = relationship("Course", back_populates="knowledge_points")
+    chapter = relationship("CourseChapter", back_populates="knowledge_points")
+    source_material = relationship("CourseMaterial", back_populates="knowledge_points")
+    creator_teacher = relationship("Teacher", back_populates="created_knowledge_points")
+    mastery_records = relationship("StudentKnowledgeMastery", back_populates="knowledge_point")
+    mastery_events = relationship("KnowledgeMasteryEvent", back_populates="knowledge_point")
+
+
+class StudentKnowledgeMastery(Base):
+    __tablename__ = "student_knowledge_mastery"
+    __table_args__ = (
+        UniqueConstraint("student_id", "knowledge_point_id", name="uq_student_knowledge_point"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    knowledge_point_id = Column(Integer, ForeignKey("knowledge_points.id"), nullable=False, index=True)
+    mastery_level = Column(Float, default=0.0, nullable=False, index=True)
+    correct_count = Column(Integer, default=0, nullable=False)
+    wrong_count = Column(Integer, default=0, nullable=False)
+    practice_count = Column(Integer, default=0, nullable=False)
+    last_practiced_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    student = relationship("Student", back_populates="mastery_records")
+    knowledge_point = relationship("KnowledgePoint", back_populates="mastery_records")
+
+
+class KnowledgeMasteryEvent(Base):
+    __tablename__ = "knowledge_mastery_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    knowledge_point_id = Column(Integer, ForeignKey("knowledge_points.id"), nullable=False, index=True)
+    source_type = Column(String(40), nullable=False, index=True)
+    source_id = Column(String(80), nullable=True, index=True)
+    score = Column(Float, nullable=True)
+    max_score = Column(Float, nullable=True)
+    is_correct = Column(Boolean, nullable=True, index=True)
+    mastery_delta = Column(Float, default=0.0, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    student = relationship("Student", back_populates="mastery_events")
+    knowledge_point = relationship("KnowledgePoint", back_populates="mastery_events")
 
 
 class AssignmentScore(Base):

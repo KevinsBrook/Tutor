@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+
+import { useAuth } from "@/context/AuthContext";
+import { apiUrl } from "@/lib/api";
+
 declare global {
   interface Window {
     webkitSpeechRecognition: any;
@@ -9,8 +13,6 @@ declare global {
     __currentRecognition?: any;
   }
 }
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8001";
 
 type Submission = {
   id: number;
@@ -44,6 +46,7 @@ type AnswerResult = {
 
 export default function StudentExperimentPage() {
   const router = useRouter();
+  const { session, isReady } = useAuth();
 
   const [username, setUsername] = useState("");
   const [userRole, setUserRole] = useState("");
@@ -85,31 +88,25 @@ export default function StudentExperimentPage() {
 
   useEffect(() => {
     const init = async () => {
+      if (!isReady) return;
+
       try {
-        const rawUser = localStorage.getItem("auth_user");
-        if (!rawUser) {
+        if (!session) {
           alert("请先登录");
-          router.push("/login");
+          router.replace("/login");
           return;
         }
 
-        const user = JSON.parse(rawUser);
-        if (!user?.username) {
-          alert("登录信息无效，请重新登录");
-          router.push("/login");
-          return;
-        }
-
-        if (user.role !== "student") {
+        if (session.role !== "student") {
           alert("当前账号不是学生账号");
-          router.push("/login");
+          router.replace("/login");
           return;
         }
 
-        setUsername(user.username);
-        setUserRole(user.role);
+        setUsername(session.username);
+        setUserRole(session.role);
 
-        await fetchMySubmissions(user.username);
+        await fetchMySubmissions(session.username);
       } catch (error: any) {
         alert(error.message || "初始化失败");
       } finally {
@@ -118,7 +115,7 @@ export default function StudentExperimentPage() {
     };
 
     init();
-  }, [router]);
+  }, [isReady, router, session]);
   useEffect(() => {
     const SpeechRecognition =
       typeof window !== "undefined"
@@ -161,7 +158,7 @@ export default function StudentExperimentPage() {
       setRefreshing(true);
 
       const res = await fetch(
-        `${API_BASE}/api/v1/experiment/my-submissions/${studentUsername}`,
+        apiUrl(`/api/v1/experiment/my-submissions/${studentUsername}`),
       );
       const data = await res.json();
 
@@ -205,7 +202,7 @@ export default function StudentExperimentPage() {
       formData.append("experiment_title", uploadForm.experiment_title);
       formData.append("file", uploadFile);
 
-      const res = await fetch(`${API_BASE}/api/v1/experiment/upload-report`, {
+      const res = await fetch(apiUrl("/api/v1/experiment/upload-report"), {
         method: "POST",
         body: formData,
       });
@@ -241,7 +238,7 @@ export default function StudentExperimentPage() {
     try {
       setGeneratingForId(submissionId);
 
-      const res = await fetch(`${API_BASE}/api/v1/experiment/generate-questions`, {
+      const res = await fetch(apiUrl("/api/v1/experiment/generate-questions"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -278,7 +275,7 @@ export default function StudentExperimentPage() {
       setSelectedSubmissionId(submissionId);
 
       const res = await fetch(
-        `${API_BASE}/api/v1/experiment/submission-detail/${submissionId}`,
+        apiUrl(`/api/v1/experiment/submission-detail/${submissionId}`),
       );
       const data = await res.json();
 
@@ -387,7 +384,7 @@ export default function StudentExperimentPage() {
     try {
       setSubmittingQuestionId(questionId);
 
-      const res = await fetch(`${API_BASE}/api/v1/experiment/submit-answer`, {
+      const res = await fetch(apiUrl("/api/v1/experiment/submit-answer"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

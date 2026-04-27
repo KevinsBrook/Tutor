@@ -75,7 +75,7 @@ class DocumentAdder:
 
         # For llamaindex, check llamaindex_storage instead of rag_storage
         provider = self._get_provider_from_metadata()
-        if provider == "llamaindex":
+        if provider.startswith("llamaindex"):
             llamaindex_storage = self.kb_dir / "llamaindex_storage"
             if not llamaindex_storage.exists():
                 raise ValueError(f"Knowledge base not initialized (llamaindex): {kb_name}")
@@ -228,7 +228,7 @@ class DocumentAdder:
         logger.info(f"Processing {len(new_files)} files with provider: {provider}")
 
         # Dispatch to provider-specific implementation
-        if provider == "llamaindex":
+        if provider.startswith("llamaindex"):
             return await self._process_llamaindex(new_files)
         elif provider in ("lightrag", "lightrag_v1", "lightrag_v2", "lightrag_v3", "lightrag_v4"):
             return await self._process_lightrag(new_files)

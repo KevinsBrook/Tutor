@@ -132,8 +132,8 @@ class FileTypeRouter:
         ".properties",
     }
 
-    # Word document extensions (special handling)
-    DOCX_EXTENSIONS = {".docx", ".doc"}
+    # Office document extensions (special handling by multimodal/document parsers)
+    DOCX_EXTENSIONS = {".docx", ".doc", ".pptx", ".ppt"}
 
     # Image extensions (may need OCR)
     IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}

@@ -199,7 +199,7 @@ class RAGService:
         return False
 
     @staticmethod
-    def list_providers() -> List[Dict[str, str]]:
+    def list_providers(include_experimental: bool = False) -> List[Dict[str, str]]:
         """
         List available RAG pipeline providers.
 
@@ -211,7 +211,7 @@ class RAGService:
             for p in providers:
                 print(f"{p['id']}: {p['description']}")
         """
-        return list_pipelines()
+        return list_pipelines(include_experimental=include_experimental)
 
     @staticmethod
     def get_current_provider() -> str:

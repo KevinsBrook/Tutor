@@ -409,7 +409,7 @@ class KnowledgeBaseManager:
             rag_provider = kb_config.get("rag_provider")
 
         # Determine whether index data is actually present (not just empty directories)
-        if rag_provider == "llamaindex":
+        if str(rag_provider or "").startswith("llamaindex"):
             rag_initialized = (
                 dir_exists
                 and llamaindex_storage_dir

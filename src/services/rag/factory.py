@@ -17,6 +17,20 @@ _PIPELINES: Dict[str, Callable] = {}
 _PIPELINES_INITIALIZED = False
 
 
+STABLE_PIPELINE_IDS = {"raganything", "raganything_docling", "lightrag", "llamaindex"}
+EXPERIMENTAL_PIPELINE_IDS = {
+    "lightrag_v1",
+    "lightrag_v2",
+    "lightrag_v3",
+    "lightrag_v4",
+    "llamaindex_v1",
+    "llamaindex_v2",
+    "llamaindex_v3",
+    "llamaindex_v4",
+}
+SELECTABLE_PIPELINE_IDS = STABLE_PIPELINE_IDS | EXPERIMENTAL_PIPELINE_IDS
+
+
 def _init_pipelines():
     """Lazily initialize pipeline registry.
 
@@ -159,14 +173,14 @@ def get_pipeline(name: str = "raganything", kb_base_dir: Optional[str] = None, *
         ) from e
 
 
-def list_pipelines() -> List[Dict[str, str]]:
+def list_pipelines(include_experimental: bool = False) -> List[Dict[str, str]]:
     """
     List available pipelines.
 
     Returns:
         List of pipeline info dictionaries
     """
-    return [
+    providers = [
         {
             "id": "llamaindex",
             "name": "LlamaIndex",
@@ -228,6 +242,9 @@ def list_pipelines() -> List[Dict[str, str]]:
             "description": "Multimodal document processing with Docling parser. Better for Office documents (.docx, .pptx) and HTML. Easier to install.",
         },
     ]
+    if include_experimental:
+        return providers
+    return [provider for provider in providers if provider["id"] in STABLE_PIPELINE_IDS]
 
 
 def register_pipeline(name: str, factory: Callable):

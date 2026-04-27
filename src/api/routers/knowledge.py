@@ -14,7 +14,7 @@ import re
 import shutil
 import sys
 import traceback
-from typing import Any
+from typing import Any, Iterable
 
 from fastapi import (
     APIRouter,
@@ -34,6 +34,8 @@ from src.knowledge.add_documents import DocumentAdder
 from src.knowledge.initializer import KnowledgeBaseInitializer
 from src.knowledge.manager import KnowledgeBaseManager
 from src.knowledge.progress_tracker import ProgressStage, ProgressTracker
+from src.services.rag.components.routing import FileTypeRouter
+from src.services.rag.factory import SELECTABLE_PIPELINE_IDS
 from src.utils.document_validator import DocumentValidator
 from src.utils.error_utils import format_exception_message
 
@@ -54,6 +56,74 @@ router = APIRouter()
 # Constants for byte conversions
 BYTES_PER_GB = 1024**3
 BYTES_PER_MB = 1024**2
+DEFAULT_RAG_PROVIDER = "raganything"
+
+
+def normalize_rag_provider(provider: str | None, *, allow_default: bool = True) -> str:
+    """Return a stable, user-facing RAG provider id or raise a clear API error."""
+    normalized = (provider or "").strip()
+    if not normalized and allow_default:
+        normalized = DEFAULT_RAG_PROVIDER
+    if not normalized:
+        raise HTTPException(status_code=400, detail="RAG provider is required")
+    if normalized not in SELECTABLE_PIPELINE_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"RAG provider '{normalized}' is not available. "
+                "Please choose one of: "
+                + ", ".join(sorted(SELECTABLE_PIPELINE_IDS))
+            ),
+        )
+    return normalized
+
+
+def get_provider_supported_extensions(provider: str) -> list[str]:
+    """Get stable provider extension list for API responses and validation."""
+    normalized = normalize_rag_provider(provider)
+    return sorted(FileTypeRouter.get_extensions_for_provider(normalized))
+
+
+def validate_rag_provider_files(provider: str, filenames: Iterable[str]) -> None:
+    """Reject files that the selected provider cannot actually parse."""
+    normalized = normalize_rag_provider(provider)
+    supported = set(get_provider_supported_extensions(normalized))
+    unsupported = []
+    for filename in filenames:
+        suffix = Path(filename).suffix.lower()
+        if suffix not in supported:
+            unsupported.append(filename)
+    if unsupported:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Provider '{normalized}' does not support: {', '.join(unsupported)}. "
+                f"Supported extensions: {', '.join(sorted(supported))}"
+            ),
+        )
+
+
+def enrich_rag_provider_info(provider: dict[str, str]) -> dict[str, Any]:
+    """Attach parse capability metadata used by Course Center UI."""
+    provider_id = normalize_rag_provider(provider.get("id"))
+    supported_extensions = get_provider_supported_extensions(provider_id)
+    return {
+        **provider,
+        "supported_extensions": supported_extensions,
+        "graph_capable": provider_id in {"raganything", "raganything_docling"}
+        or provider_id.startswith("lightrag"),
+    }
+
+
+def is_knowledge_base_initialized(kb_name: str) -> bool:
+    """True only when index files exist, not merely when the KB is listed in config."""
+    try:
+        manager = get_kb_manager()
+        info = manager.get_info(kb_name)
+        statistics = info.get("statistics", {})
+        return bool(statistics.get("rag_initialized"))
+    except Exception:
+        return False
 
 
 def format_bytes_human_readable(size_bytes: int) -> str:
@@ -465,6 +535,10 @@ async def run_initialization_task(initializer: KnowledgeBaseInitializer):
         )
 
         logger.success(f"[{task_id}] KB '{initializer.kb_name}' initialized")
+        try:
+            get_kb_manager().update_kb_status(initializer.kb_name, "ready")
+        except Exception as status_err:
+            logger.warning(f"[{task_id}] Failed to mark KB ready: {status_err}")
         task_manager.update_task_status(task_id, "completed")
     except Exception as e:
         error_msg = str(e)
@@ -477,6 +551,19 @@ async def run_initialization_task(initializer: KnowledgeBaseInitializer):
             initializer.progress_tracker.update(
                 ProgressStage.ERROR, f"Initialization failed: {error_msg}", error=error_msg
             )
+        try:
+            get_kb_manager().update_kb_status(
+                initializer.kb_name,
+                "error",
+                progress={
+                    "stage": "error",
+                    "message": f"Initialization failed: {error_msg}",
+                    "percent": 100,
+                    "error": error_msg,
+                },
+            )
+        except Exception as status_err:
+            logger.warning(f"[{task_id}] Failed to mark KB error: {status_err}")
 
 
 async def run_upload_processing_task(
@@ -572,6 +659,10 @@ async def run_upload_processing_task(
         )
 
         logger.success(f"[{task_id}] Processed {num_processed} files to KB '{kb_name}'")
+        try:
+            get_kb_manager().update_kb_status(kb_name, "ready")
+        except Exception as status_err:
+            logger.warning(f"[{task_id}] Failed to mark KB ready: {status_err}")
         task_manager.update_task_status(task_id, "completed")
     except Exception as e:
         error_msg = f"Upload processing failed (KB '{kb_name}'): {e}"
@@ -582,6 +673,19 @@ async def run_upload_processing_task(
         progress_tracker.update(
             ProgressStage.ERROR, f"Processing failed: {error_msg}", error=error_msg
         )
+        try:
+            get_kb_manager().update_kb_status(
+                kb_name,
+                "error",
+                progress={
+                    "stage": "error",
+                    "message": f"Processing failed: {error_msg}",
+                    "percent": 100,
+                    "error": error_msg,
+                },
+            )
+        except Exception as status_err:
+            logger.warning(f"[{task_id}] Failed to mark KB error: {status_err}")
 
 
 @router.get("/health")
@@ -609,7 +713,10 @@ async def get_rag_providers():
     try:
         from src.services.rag.service import RAGService
 
-        providers = RAGService.list_providers()
+        providers = [
+            enrich_rag_provider_info(provider)
+            for provider in RAGService.list_providers(include_experimental=True)
+        ]
         return {"providers": providers}
     except Exception as e:
         logger.error(f"Error getting RAG providers: {e}")
@@ -720,6 +827,19 @@ async def list_knowledge_bases():
 
         for name in kb_names:
             try:
+                kb_config = manager.config.get("knowledge_bases", {}).get(name, {})
+                metadata = {}
+                try:
+                    metadata = manager.get_metadata(name)
+                except Exception:
+                    metadata = {}
+                if (
+                    kb_config.get("scope") == "course_material"
+                    or metadata.get("scope") == "course_material"
+                    or name.startswith("course_")
+                ):
+                    logger.debug("Skipping course-scoped KB from public list: %s", name)
+                    continue
                 info = manager.get_info(name)
                 logger.debug(f"Successfully got info for KB '{name}': {info.get('statistics', {})}")
                 result.append(
@@ -778,6 +898,8 @@ async def get_knowledge_base_details(kb_name: str):
     try:
         manager = get_kb_manager()
         return manager.get_info(kb_name)
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
     except Exception as e:
@@ -1163,6 +1285,10 @@ async def upload_files(
         kb_path = manager.get_knowledge_base_path(kb_name)
         raw_dir = kb_path / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
+        metadata = manager.get_metadata(kb_name)
+        existing_provider = metadata.get("rag_provider") if isinstance(metadata, dict) else None
+        provider = normalize_rag_provider(existing_provider or rag_provider)
+        validate_rag_provider_files(provider, [file.filename or "" for file in files])
 
         try:
             llm_config = get_llm_config()
@@ -1179,7 +1305,11 @@ async def upload_files(
             file_path = None
             try:
                 # Sanitize filename first (without size validation)
-                sanitized_filename = DocumentValidator.validate_upload_safety(file.filename, None)
+                sanitized_filename = DocumentValidator.validate_upload_safety(
+                    file.filename,
+                    None,
+                    set(get_provider_supported_extensions(provider)),
+                )
                 file.filename = sanitized_filename
 
                 # Save file to disk with size checking during streaming
@@ -1199,7 +1329,11 @@ async def upload_files(
                         buffer.write(chunk)
 
                 # Validate with actual size (additional checks)
-                DocumentValidator.validate_upload_safety(file.filename, written_bytes)
+                DocumentValidator.validate_upload_safety(
+                    file.filename,
+                    written_bytes,
+                    set(get_provider_supported_extensions(provider)),
+                )
 
                 uploaded_files.append(file.filename)
                 uploaded_file_paths.append(str(file_path))
@@ -1220,20 +1354,57 @@ async def upload_files(
 
         logger.info(f"Uploading {len(uploaded_files)} files to KB '{kb_name}'")
 
-        background_tasks.add_task(
-            run_upload_processing_task,
-            kb_name=kb_name,
-            base_dir=str(_kb_base_dir),
-            api_key=api_key,
-            base_url=base_url,
-            uploaded_file_paths=uploaded_file_paths,
-            rag_provider=rag_provider,
-        )
+        if is_knowledge_base_initialized(kb_name):
+            background_tasks.add_task(
+                run_upload_processing_task,
+                kb_name=kb_name,
+                base_dir=str(_kb_base_dir),
+                api_key=api_key,
+                base_url=base_url,
+                uploaded_file_paths=uploaded_file_paths,
+                rag_provider=provider,
+            )
+        else:
+            progress_tracker = ProgressTracker(kb_name, _kb_base_dir)
+            initializer = KnowledgeBaseInitializer(
+                kb_name=kb_name,
+                base_dir=str(_kb_base_dir),
+                api_key=api_key,
+                base_url=base_url,
+                progress_tracker=progress_tracker,
+                rag_provider=provider,
+            )
+            initializer.create_directory_structure()
+            progress_tracker.update(
+                ProgressStage.PROCESSING_DOCUMENTS,
+                f"Saved {len(uploaded_files)} files, preparing to initialize...",
+                current=0,
+                total=len(uploaded_files),
+            )
+            manager.update_kb_status(
+                kb_name,
+                "initializing",
+                progress={
+                    "stage": "processing_documents",
+                    "message": "Initializing knowledge base with uploaded files...",
+                    "percent": 0,
+                    "current": 0,
+                    "total": len(uploaded_files),
+                },
+            )
+            manager.config = manager._load_config()
+            if kb_name in manager.config.get("knowledge_bases", {}):
+                manager.config["knowledge_bases"][kb_name]["rag_provider"] = provider
+                manager._save_config()
+            background_tasks.add_task(run_initialization_task, initializer)
 
         return {
             "message": f"Uploaded {len(uploaded_files)} files. Processing in background.",
             "files": uploaded_files,
+            "rag_provider": provider,
         }
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
     except Exception as e:
@@ -1251,6 +1422,8 @@ async def create_knowledge_base(
 ):
     """Create a new knowledge base and initialize it with files."""
     try:
+        provider = normalize_rag_provider(rag_provider)
+        validate_rag_provider_files(provider, [file.filename or "" for file in files])
         manager = get_kb_manager()
         if name in manager.list_knowledge_bases():
             raise HTTPException(status_code=400, detail=f"Knowledge base '{name}' already exists")
@@ -1280,7 +1453,7 @@ async def create_knowledge_base(
         # Also store rag_provider in config (reload and update)
         manager.config = manager._load_config()
         if name in manager.config.get("knowledge_bases", {}):
-            manager.config["knowledge_bases"][name]["rag_provider"] = rag_provider
+            manager.config["knowledge_bases"][name]["rag_provider"] = provider
             manager._save_config()
 
         progress_tracker = ProgressTracker(name, _kb_base_dir)
@@ -1291,7 +1464,7 @@ async def create_knowledge_base(
             api_key=api_key,
             base_url=base_url,
             progress_tracker=progress_tracker,
-            rag_provider=rag_provider,
+            rag_provider=provider,
         )
 
         initializer.create_directory_structure()
@@ -1303,10 +1476,20 @@ async def create_knowledge_base(
 
         uploaded_files = []
         for file in files:
-            file_path = initializer.raw_dir / file.filename
+            sanitized_filename = DocumentValidator.validate_upload_safety(
+                file.filename,
+                None,
+                set(get_provider_supported_extensions(provider)),
+            )
+            file_path = initializer.raw_dir / sanitized_filename
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-            uploaded_files.append(file.filename)
+            DocumentValidator.validate_upload_safety(
+                sanitized_filename,
+                file_path.stat().st_size,
+                set(get_provider_supported_extensions(provider)),
+            )
+            uploaded_files.append(sanitized_filename)
 
         progress_tracker.update(
             ProgressStage.PROCESSING_DOCUMENTS,
@@ -1323,6 +1506,7 @@ async def create_knowledge_base(
             "message": f"Knowledge base '{name}' created. Processing {len(uploaded_files)} files in background.",
             "name": name,
             "files": uploaded_files,
+            "rag_provider": provider,
         }
 
     except HTTPException:

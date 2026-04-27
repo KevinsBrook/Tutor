@@ -2,12 +2,20 @@
 
 import React, { createContext, useContext, useMemo, useState } from "react";
 
+import { apiUrl } from "@/lib/api";
+
 export type UserRole = "teacher" | "student";
 
 export interface AuthSession {
   username: string;
   role: UserRole;
   loggedInAt: number;
+}
+
+export interface AuthProfile {
+  id?: number;
+  real_name?: string;
+  [key: string]: unknown;
 }
 
 interface LoginResult {
@@ -17,6 +25,7 @@ interface LoginResult {
 
 interface AuthContextType {
   session: AuthSession | null;
+  profile: AuthProfile | null;
   isAuthenticated: boolean;
   isReady: boolean;
   login: (username: string, password: string) => Promise<LoginResult>;
@@ -25,6 +34,7 @@ interface AuthContextType {
 }
 
 const AUTH_USER_KEY = "auth_user";
+const AUTH_PROFILE_KEY = "auth_profile";
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -48,13 +58,26 @@ function readSessionFromStorage(): AuthSession | null {
   }
 }
 
+function readProfileFromStorage(): AuthProfile | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const rawProfile = localStorage.getItem(AUTH_PROFILE_KEY);
+    return rawProfile ? JSON.parse(rawProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [profile, setProfile] = useState<AuthProfile | null>(null);
   const [isReady, setIsReady] = useState(false);
 
   const refreshSession = () => {
     const nextSession = readSessionFromStorage();
     setSession(nextSession);
+    setProfile(readProfileFromStorage());
   };
 
   React.useEffect(() => {
@@ -63,11 +86,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = async (username: string, password: string): Promise<LoginResult> => {
-    const API_BASE =
-      process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8001";
-
     try {
-      const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+      const res = await fetch(apiUrl("/api/v1/auth/login"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -85,10 +105,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (typeof window !== "undefined") {
-        localStorage.setItem("auth_user", JSON.stringify(data.user));
-        localStorage.setItem("auth_profile", JSON.stringify(data.profile || {}));
+        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
+        localStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(data.profile || {}));
       }
 
+      setProfile(data.profile || null);
       setSession({
         username: data.user.username,
         role: data.user.role,
@@ -103,22 +124,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     setSession(null);
+    setProfile(null);
     if (typeof window !== "undefined") {
-      localStorage.removeItem("auth_user");
-      localStorage.removeItem("auth_profile");
+      localStorage.removeItem(AUTH_USER_KEY);
+      localStorage.removeItem(AUTH_PROFILE_KEY);
     }
   };
 
   const value = useMemo<AuthContextType>(
     () => ({
       session,
+      profile,
       isAuthenticated: !!session,
       isReady,
       login,
       logout,
       refreshSession,
     }),
-    [isReady, session],
+    [isReady, profile, session],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

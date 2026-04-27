@@ -11,6 +11,8 @@ Phase 6 storage evolution baseline:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -40,6 +42,14 @@ class JsonAssignmentReviewRepository:
 
     def write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            delete=False,
+            suffix=f"{path.suffix}.tmp",
+        ) as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
-
+            f.write("\n")
+            temp_path = Path(f.name)
+        os.replace(temp_path, path)

@@ -13,6 +13,7 @@ from src.api.routers import (
     chat,
     co_writer,
     config,
+    courses,
     dashboard,
     guide,
     ideagen,
@@ -204,6 +205,7 @@ app.include_router(teacher.router, prefix="/api/v1/teacher", tags=["teacher"])
 app.include_router(question.router, prefix="/api/v1/question", tags=["question"])
 app.include_router(research.router, prefix="/api/v1/research", tags=["research"])
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["knowledge"])
+app.include_router(courses.router, prefix="/api/v1/courses", tags=["courses"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"])
 app.include_router(co_writer.router, prefix="/api/v1/co_writer", tags=["co_writer"])
 app.include_router(notebook.router, prefix="/api/v1/notebook", tags=["notebook"])

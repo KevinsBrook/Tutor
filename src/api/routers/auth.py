@@ -64,6 +64,34 @@ def _get_user_by_email(db: Session, email: str | None) -> User | None:
     return db.query(User).filter(User.email == email).first()
 
 
+def _build_profile(db: Session, user: User) -> dict | None:
+    if user.role == "student":
+        student = db.query(Student).filter(Student.user_id == user.id).first()
+        if not student:
+            return None
+        return {
+            "id": student.id,
+            "real_name": student.real_name,
+            "student_no": student.student_no,
+            "grade_name": student.grade_name,
+            "class_name": student.class_name,
+            "major": student.major,
+        }
+
+    if user.role == "teacher":
+        teacher = db.query(Teacher).filter(Teacher.user_id == user.id).first()
+        if not teacher:
+            return None
+        return {
+            "id": teacher.id,
+            "real_name": teacher.real_name,
+            "teacher_no": teacher.teacher_no,
+            "department": teacher.department,
+        }
+
+    return None
+
+
 # =========================
 # Register: Student
 # =========================
@@ -214,25 +242,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
     if not verify_password(request.password, user.password_hash):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-    profile = None
-    if user.role == "student":
-        student = db.query(Student).filter(Student.user_id == user.id).first()
-        if student:
-            profile = {
-                "real_name": student.real_name,
-                "student_no": student.student_no,
-                "grade_name": student.grade_name,
-                "class_name": student.class_name,
-                "major": student.major,
-            }
-    elif user.role == "teacher":
-        teacher = db.query(Teacher).filter(Teacher.user_id == user.id).first()
-        if teacher:
-            profile = {
-                "real_name": teacher.real_name,
-                "teacher_no": teacher.teacher_no,
-                "department": teacher.department,
-            }
+    profile = _build_profile(db, user)
 
     return {
         "success": True,
@@ -257,25 +267,7 @@ async def get_me(username: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    profile = None
-    if user.role == "student":
-        student = db.query(Student).filter(Student.user_id == user.id).first()
-        if student:
-            profile = {
-                "real_name": student.real_name,
-                "student_no": student.student_no,
-                "grade_name": student.grade_name,
-                "class_name": student.class_name,
-                "major": student.major,
-            }
-    elif user.role == "teacher":
-        teacher = db.query(Teacher).filter(Teacher.user_id == user.id).first()
-        if teacher:
-            profile = {
-                "real_name": teacher.real_name,
-                "teacher_no": teacher.teacher_no,
-                "department": teacher.department,
-            }
+    profile = _build_profile(db, user)
 
     return {
         "user": {

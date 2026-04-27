@@ -8,13 +8,17 @@ import sys
 import traceback
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from src.agents.question import AgentCoordinator
 from src.api.utils.history import ActivityType, history_manager
 from src.api.utils.log_interceptor import LogInterceptor
 from src.api.utils.task_id_manager import TaskIDManager
+from src.core.database import get_db
+from src.core.models import KnowledgePoint, Student, User
+from src.services.mastery import apply_mastery_event
 from src.tools.question import mimic_exam_questions
 from src.utils.document_validator import DocumentValidator
 from src.utils.error_utils import format_exception_message
@@ -45,6 +49,12 @@ MIMIC_OUTPUT_DIR = PROJECT_ROOT / "data" / "user" / "question" / "mimic_papers"
 class WrittenEvaluateRequest(BaseModel):
     question: dict[str, Any]
     answer: str
+    student_username: str | None = None
+    knowledge_point_id: int | None = None
+    source_id: str | None = None
+    difficulty: str = "medium"
+    used_hint: bool = False
+    attempt_count: int | None = Field(default=None, ge=1, le=20)
 
 
 def _normalize_words(text: str) -> set[str]:
@@ -150,12 +160,59 @@ async def _evaluate_written_answer_with_llm(question: dict[str, Any], answer: st
 
 
 @router.post("/evaluate/written")
-async def evaluate_written_submission(request: WrittenEvaluateRequest):
+async def evaluate_written_submission(
+    request: WrittenEvaluateRequest,
+    db: Session = Depends(get_db),
+):
     question_type = str(request.question.get("question_type", "")).lower()
     if question_type and question_type not in {"written", "essay", "subjective"}:
         raise HTTPException(status_code=400, detail="This endpoint is only for written questions")
     result = await _evaluate_written_answer_with_llm(request.question, request.answer)
-    return {"success": True, **result}
+    mastery_payload = None
+    if request.student_username and request.knowledge_point_id:
+        try:
+            user = (
+                db.query(User)
+                .filter(User.username == request.student_username, User.role == "student")
+                .first()
+            )
+            student = db.query(Student).filter(Student.user_id == user.id).first() if user else None
+            point = (
+                db.query(KnowledgePoint)
+                .filter(KnowledgePoint.id == request.knowledge_point_id)
+                .first()
+            )
+            if student and point:
+                status = str(result.get("status", "")).lower()
+                is_correct = True if status == "correct" else False if status == "incorrect" else None
+                update = apply_mastery_event(
+                    db,
+                    student_id=student.id,
+                    knowledge_point_id=point.id,
+                    source_type="question_practice",
+                    source_id=request.source_id or f"written:{point.id}",
+                    difficulty=request.difficulty,
+                    answer_quality="partial" if status == "partial" else None,
+                    used_hint=request.used_hint,
+                    attempt_count=request.attempt_count,
+                    score=float(result.get("score_ratio", 0.0)),
+                    max_score=1.0,
+                    is_correct=is_correct,
+                    note="题目模块主观题评分后自动更新掌握度",
+                )
+                db.commit()
+                mastery_payload = {
+                    "event_id": update.event.id,
+                    "knowledge_point_id": point.id,
+                    "mastery_level": update.mastery.mastery_level,
+                    "mastery_delta": update.event.mastery_delta,
+                    "strategy": update.details,
+                }
+        except Exception as exc:
+            db.rollback()
+            logger.warning("Failed to update written-question mastery: %s", format_exception_message(exc))
+            mastery_payload = {"error": "掌握度更新失败，评分结果已保留"}
+    return {"success": True, **result, "mastery": mastery_payload}
 
 
 @router.websocket("/mimic")
