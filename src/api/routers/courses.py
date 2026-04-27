@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from pathlib import Path
+import re
 import shutil
 from typing import Literal
 import uuid
@@ -33,6 +34,7 @@ from src.api.routers.knowledge import (
     ProgressStage,
     ProgressTracker,
     _build_graph_payload,
+    generate_node_explanation_cache,
     get_provider_supported_extensions,
     is_knowledge_base_initialized,
     normalize_rag_provider,
@@ -454,19 +456,479 @@ def _set_material_parse_status(material_id: int, status: str) -> None:
         db.close()
 
 
-def _sync_material_knowledge_points(material_id: int, limit: int = 24) -> int:
+def _compact_text(text: str, max_len: int = 360) -> str:
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= max_len:
+        return compact
+    return compact[: max_len - 3].rstrip() + "..."
+
+
+_EXPLANATION_NOISE_RE = re.compile(
+    r"(<\s*/?\s*SEP\s*>|&lt;\s*/?\s*SEP\s*&gt;|<\|[^>]*\|>|##+|={3,}|-{4,})",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；;.!?])\s*|[\r\n]+")
+_DEFINITION_RE = re.compile(
+    r"(是|指|表示|定义为|称为|用于|用来|包括|包含|由.+组成|体现|描述|refers to|means|"
+    r"is a|is an|is the|are the|defined as|used to|consists of|includes)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_explanation_text(text: str, max_len: int = 700) -> str:
+    raw = str(text or "")
+    raw = raw.replace("\\n", " ").replace("\\t", " ")
+    raw = raw.replace("\u0000", " ").replace("\ufeff", " ").replace("\u200b", " ")
+    raw = _EXPLANATION_NOISE_RE.sub(" ", raw)
+    raw = re.sub(r'["“”]{2,}', '"', raw)
+    raw = re.sub(r"[|]{2,}", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip(" \t\r\n,，;；。")
+    return _compact_text(raw, max_len)
+
+
+def _normalize_for_match(text: str) -> str:
+    return re.sub(r"[\s_`'\"“”‘’（）()【】\[\]{}<>《》:：,，.。;；、-]+", "", str(text or "").lower())
+
+
+def _mentions_label(text: str, label: str) -> bool:
+    normalized_text = _normalize_for_match(text)
+    normalized_label = _normalize_for_match(label)
+    if not normalized_text or not normalized_label:
+        return False
+    if normalized_label in normalized_text:
+        return True
+
+    ascii_terms = [
+        part.lower()
+        for part in re.split(r"[\s_\-/]+", str(label or ""))
+        if len(part.strip()) >= 3 and part.isascii()
+    ]
+    return bool(ascii_terms) and all(term in str(text or "").lower() for term in ascii_terms)
+
+
+def _split_explanation_sentences(text: str) -> list[str]:
+    cleaned = _sanitize_explanation_text(text, 1200)
+    if not cleaned:
+        return []
+    sentences = [
+        _sanitize_explanation_text(sentence, 260)
+        for sentence in _SENTENCE_SPLIT_RE.split(cleaned)
+        if sentence and sentence.strip()
+    ]
+    if len(sentences) == 1 and len(sentences[0]) > 260:
+        long_text = sentences[0]
+        sentences = [long_text[i : i + 220] for i in range(0, min(len(long_text), 660), 220)]
+    return [sentence for sentence in sentences if len(sentence) >= 8]
+
+
+def _definition_signal(text: str) -> bool:
+    return bool(_DEFINITION_RE.search(str(text or "")))
+
+
+def _candidate_noise_penalty(original: str, cleaned: str) -> int:
+    penalty = 0
+    raw = str(original or "")
+    if _EXPLANATION_NOISE_RE.search(raw):
+        penalty += 35
+    if len(cleaned) < 10:
+        penalty += 25
+    if len(cleaned) > 420:
+        penalty += 10
+    if cleaned.count("{") + cleaned.count("}") + cleaned.count("[") + cleaned.count("]") >= 4:
+        penalty += 20
+    if re.search(r"\b(chunk|entity_name|source_id|<sep>|vector|embedding)\b", cleaned, re.IGNORECASE):
+        penalty += 15
+    return penalty
+
+
+def _score_supported_explanation(label: str, text: str, *, source: str) -> int:
+    cleaned = _sanitize_explanation_text(text)
+    score = 0
+    if _mentions_label(cleaned, label):
+        score += 28
+    else:
+        score -= 30
+    if _definition_signal(cleaned):
+        score += 22
+    if 18 <= len(cleaned) <= 240:
+        score += 18
+    elif 10 <= len(cleaned) <= 360:
+        score += 10
+    if source in {"entity_chunk", "text_chunk"}:
+        score += 18
+    elif source == "vdb_entities":
+        score += 14
+    elif source == "graph_description":
+        score += 8
+    if "。" in cleaned or "." in cleaned or "；" in cleaned or ";" in cleaned:
+        score += 5
+    score -= _candidate_noise_penalty(text, cleaned)
+    return max(0, min(100, score))
+
+
+def _best_sentence_from_content(label: str, content: str, *, source: str) -> dict:
+    sentences = _split_explanation_sentences(content)
+    if not sentences:
+        cleaned = _sanitize_explanation_text(content)
+        return {
+            "text": cleaned,
+            "score": _score_supported_explanation(label, cleaned, source=source),
+            "source": source,
+        }
+
+    best = {"text": "", "score": 0, "source": source}
+    for index, sentence in enumerate(sentences):
+        window = sentence
+        if index + 1 < len(sentences) and len(window) < 140:
+            next_sentence = sentences[index + 1]
+            if _mentions_label(next_sentence, label) or _definition_signal(next_sentence):
+                window = f"{window}{next_sentence}"
+        score = _score_supported_explanation(label, window, source=source)
+        if score > best["score"]:
+            best = {"text": _sanitize_explanation_text(window, 320), "score": score, "source": source}
+    return best
+
+
+def _dict_get_case_insensitive(data: dict, key: str):
+    if key in data:
+        return data[key]
+    lowered = key.lower()
+    for item_key, value in data.items():
+        if str(item_key).lower() == lowered:
+            return value
+    return None
+
+
+_ENGLISH_TO_CHINESE_KP_ALIASES = {
+    "accuracy": "准确率",
+    "activation function": "激活函数",
+    "adam": "Adam优化器",
+    "attention mechanism": "注意力机制",
+    "backpropagation": "反向传播",
+    "bayes theorem": "贝叶斯定理",
+    "bayes formula": "贝叶斯公式",
+    "batch normalization": "批量归一化",
+    "binary classification": "二分类",
+    "classification": "分类",
+    "clustering": "聚类",
+    "conditional probability": "条件概率",
+    "confusion matrix": "混淆矩阵",
+    "convolution": "卷积",
+    "convolutional neural network": "卷积神经网络",
+    "cnn": "卷积神经网络",
+    "cross entropy": "交叉熵",
+    "decision tree": "决策树",
+    "deep learning": "深度学习",
+    "dropout": "Dropout",
+    "embedding": "嵌入",
+    "epoch": "训练轮次",
+    "f1 score": "F1分数",
+    "gradient descent": "梯度下降",
+    "k means": "K均值",
+    "linear regression": "线性回归",
+    "logistic regression": "逻辑回归",
+    "loss function": "损失函数",
+    "machine learning": "机器学习",
+    "mean squared error": "均方误差",
+    "mse": "均方误差",
+    "neural network": "神经网络",
+    "overfitting": "过拟合",
+    "precision": "精确率",
+    "recall": "召回率",
+    "relu": "ReLU",
+    "regularization": "正则化",
+    "reinforcement learning": "强化学习",
+    "rnn": "循环神经网络",
+    "recurrent neural network": "循环神经网络",
+    "softmax": "Softmax",
+    "supervised learning": "监督学习",
+    "support vector machine": "支持向量机",
+    "svm": "支持向量机",
+    "transformer": "Transformer",
+    "underfitting": "欠拟合",
+    "unsupervised learning": "无监督学习",
+}
+_CHINESE_TO_ENGLISH_KP_ALIASES = {
+    chinese: english for english, chinese in _ENGLISH_TO_CHINESE_KP_ALIASES.items()
+}
+
+
+def _contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(text or "")))
+
+
+def _normalize_alias_key(text: str) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(text or "").lower())
+
+
+def _english_alias_key(text: str) -> str:
+    normalized = re.sub(r"[^0-9a-z]+", " ", str(text or "").lower()).strip()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _extract_label_parts(label: str) -> list[str]:
+    text = str(label or "").strip()
+    if not text:
+        return []
+    parts = [text]
+    parts.extend(
+        match.strip()
+        for match in re.findall(r"[\(（\[]([^()（）\[\]]+)[\)）\]]", text)
+        if match.strip()
+    )
+    parts.extend(part.strip() for part in re.split(r"[/／|,，;；]", text) if part.strip())
+    return list(dict.fromkeys(parts))
+
+
+def _extract_chinese_label(label: str) -> str:
+    text = str(label or "").strip()
+    if not text or not _contains_cjk(text):
+        return ""
+    without_parentheses = re.sub(r"[\(（\[].*?[\)）\]]", " ", text)
+    chunks = re.findall(r"[\u4e00-\u9fffA-Za-z0-9·+\-]+", without_parentheses)
+    chinese_chunks = [chunk.strip(" -+") for chunk in chunks if _contains_cjk(chunk)]
+    if chinese_chunks:
+        return max(chinese_chunks, key=len)
+    return text
+
+
+def _preferred_knowledge_point_name(label: str) -> str:
+    text = str(label or "").strip()
+    if not text:
+        return ""
+    chinese = _extract_chinese_label(text)
+    if chinese:
+        return chinese
+    for part in _extract_label_parts(text):
+        alias = _ENGLISH_TO_CHINESE_KP_ALIASES.get(_english_alias_key(part))
+        if alias:
+            return alias
+    return text
+
+
+def _knowledge_point_alias_keys(label: str) -> set[str]:
+    keys: set[str] = set()
+    for part in _extract_label_parts(label):
+        normalized = _normalize_alias_key(part)
+        if normalized:
+            keys.add(normalized)
+        english_key = _english_alias_key(part)
+        if english_key:
+            keys.add(english_key)
+            chinese_alias = _ENGLISH_TO_CHINESE_KP_ALIASES.get(english_key)
+            if chinese_alias:
+                keys.add(_normalize_alias_key(chinese_alias))
+        chinese = _extract_chinese_label(part)
+        if chinese:
+            keys.add(_normalize_alias_key(chinese))
+            english_alias = _CHINESE_TO_ENGLISH_KP_ALIASES.get(chinese)
+            if english_alias:
+                keys.add(english_alias)
+    preferred = _preferred_knowledge_point_name(label)
+    if preferred and preferred != label:
+        keys.add(_normalize_alias_key(preferred))
+    return {key for key in keys if key}
+
+
+def _lookup_cached_node_explanation(kb_dir: Path, node: dict, label: str) -> dict:
+    cache_file = kb_dir / "rag_storage" / "node_explanations.json"
+    if not cache_file.exists():
+        return {"description": "", "confidence": 0, "method": "cache_missing"}
+    try:
+        cache = _safe_read_json(cache_file)
+        if not isinstance(cache, dict):
+            return {"description": "", "confidence": 0, "method": "cache_invalid"}
+        nodes = cache.get("nodes")
+        if not isinstance(nodes, dict):
+            return {"description": "", "confidence": 0, "method": "cache_invalid"}
+        node_id = str(node.get("id") or label).strip()
+        record = nodes.get(node_id)
+        if not isinstance(record, dict) and label != node_id:
+            for item in nodes.values():
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("label") or "").strip().lower() == label.lower():
+                    record = item
+                    break
+        if not isinstance(record, dict):
+            return {"description": "", "confidence": 0, "method": "cache_missing"}
+        explanation = _sanitize_explanation_text(str(record.get("explanation") or ""), 900)
+        if not explanation:
+            return {"description": "", "confidence": 0, "method": "cache_empty"}
+        cache_confidence = int(record.get("confidence") or 0)
+        local_score = _score_supported_explanation(
+            label,
+            explanation,
+            source="entity_chunk" if cache_confidence >= 60 else "graph_description",
+        )
+        return {
+            "description": explanation,
+            "confidence": max(cache_confidence, local_score),
+            "method": f"cached_{record.get('explanation_source') or 'node_explanation'}",
+        }
+    except Exception:
+        return {"description": "", "confidence": 0, "method": "cache_error"}
+
+
+def _collect_graph_node_explanation_candidates(kb_dir: Path, node: dict, label: str) -> list[dict]:
+    """Collect local evidence for a node without trusting any single store blindly."""
+    candidates: list[dict] = []
+    raw_description = str(node.get("description") or "").strip()
+    if raw_description:
+        candidates.append({"source": "graph_description", "content": raw_description})
+
+    canonical_id = str(node.get("id") or label).strip()
+    rag_storage_dir = kb_dir / "rag_storage"
+    vdb_entities_file = rag_storage_dir / "vdb_entities.json"
+    entity_chunks_file = rag_storage_dir / "kv_store_entity_chunks.json"
+    text_chunks_file = rag_storage_dir / "kv_store_text_chunks.json"
+
+    if vdb_entities_file.exists():
+        try:
+            vdb_data = _safe_read_json(vdb_entities_file)
+            entity_records = vdb_data.get("data") if isinstance(vdb_data, dict) else None
+            if isinstance(entity_records, list):
+                best_content = ""
+                for item in entity_records:
+                    if not isinstance(item, dict):
+                        continue
+                    entity_name = str(item.get("entity_name") or "").strip()
+                    if entity_name.lower() in {canonical_id.lower(), label.lower()}:
+                        content = str(item.get("content") or "")
+                        if len(content) > len(best_content):
+                            best_content = content
+                if best_content:
+                    candidates.append({"source": "vdb_entities", "content": best_content})
+        except Exception:
+            pass
+
+    chunk_ids: list[str] = []
+    if entity_chunks_file.exists():
+        try:
+            entity_chunk_data = _safe_read_json(entity_chunks_file)
+            if isinstance(entity_chunk_data, dict):
+                rec = _dict_get_case_insensitive(entity_chunk_data, canonical_id)
+                if rec is None and label != canonical_id:
+                    rec = _dict_get_case_insensitive(entity_chunk_data, label)
+                if isinstance(rec, dict):
+                    raw_chunk_ids = rec.get("chunk_ids")
+                    if isinstance(raw_chunk_ids, list):
+                        chunk_ids = [str(cid) for cid in raw_chunk_ids if str(cid).strip()]
+        except Exception:
+            pass
+
+    if chunk_ids and text_chunks_file.exists():
+        try:
+            text_chunks_data = _safe_read_json(text_chunks_file)
+            if isinstance(text_chunks_data, dict):
+                for cid in chunk_ids[:4]:
+                    chunk_payload = text_chunks_data.get(cid)
+                    if not isinstance(chunk_payload, dict):
+                        continue
+                    content = _compact_text(str(chunk_payload.get("content") or ""), 280)
+                    if content:
+                        candidates.append({"source": "entity_chunk", "content": content})
+        except Exception:
+            pass
+
+    return candidates
+
+
+def _lookup_graph_node_explanation(kb_dir: Path, node: dict, label: str) -> dict:
+    cached = _lookup_cached_node_explanation(kb_dir, node, label)
+    if cached["description"] and cached["confidence"] >= 60:
+        return cached
+
+    candidates = _collect_graph_node_explanation_candidates(kb_dir, node, label)
+    best = {"text": "", "score": 0, "source": "none"}
+    for candidate in candidates:
+        content = str(candidate.get("content") or "")
+        source = str(candidate.get("source") or "unknown")
+        scored = _best_sentence_from_content(label, content, source=source)
+        if scored["score"] > best["score"]:
+            best = scored
+    return {
+        "description": best["text"],
+        "confidence": best["score"],
+        "method": best["source"],
+    }
+
+
+def _derive_knowledge_point_description(
+    kb_dir: Path,
+    node: dict,
+    label: str,
+    connected_labels: list[str],
+    material: CourseMaterial,
+    display_label: str | None = None,
+) -> str:
+    explicit = _lookup_graph_node_explanation(kb_dir, node, label)
+    if explicit["description"] and explicit["confidence"] >= 60:
+        return explicit["description"]
+    source = material.title or material.original_filename or "课程资料"
+    shown_label = display_label or label
+    if connected_labels:
+        related = "、".join(connected_labels[:4])
+        suffix = "等概念" if len(connected_labels) > 4 else "等概念"
+        return f"资料中暂未抽取到“{shown_label}”的稳定定义。系统仅识别到它与{related}{suffix}存在关联，建议教师确认时补充其定义、适用边界和典型例子。"
+    return f"资料《{source}》中暂未抽取到“{shown_label}”的稳定定义。建议教师确认时补充其定义、适用边界和典型例子。"
+
+
+def _derive_knowledge_point_explanation(
+    kb_dir: Path,
+    node: dict,
+    label: str,
+    connected_labels: list[str],
+    material: CourseMaterial,
+    display_label: str | None = None,
+) -> dict:
+    explicit = _lookup_graph_node_explanation(kb_dir, node, label)
+    if explicit["description"] and explicit["confidence"] >= 60:
+        return explicit
+    return {
+        "description": _derive_knowledge_point_description(
+            kb_dir,
+            node,
+            label,
+            connected_labels,
+            material,
+            display_label,
+        ),
+        "confidence": explicit["confidence"],
+        "method": "needs_teacher_review",
+    }
+
+
+def _priority_from_graph_rank(rank: int, total: int, degree: int) -> int:
+    if degree <= 0:
+        return 1
+    ratio = rank / max(1, total)
+    if ratio <= 0.12 and degree >= 3:
+        return 5
+    if ratio <= 0.35 and degree >= 2:
+        return 4
+    if ratio <= 0.75:
+        return 3
+    return 2
+
+
+def _sync_material_knowledge_points(
+    material_id: int,
+    limit: int = 24,
+    refresh_existing: bool = False,
+) -> dict:
     db = SessionLocal()
     try:
         material = db.query(CourseMaterial).filter(CourseMaterial.id == material_id).first()
         if not material or not material.kb_name:
-            return 0
+            return {"created": 0, "updated": 0}
 
         kb_dir = _kb_base_dir / material.kb_name
         rag_storage_dir = kb_dir / "rag_storage"
         entities_file = rag_storage_dir / "kv_store_full_entities.json"
         relations_file = rag_storage_dir / "kv_store_full_relations.json"
         if not entities_file.exists() or not relations_file.exists():
-            return 0
+            return {"created": 0, "updated": 0}
 
         graph_payload = _build_graph_payload(
             entities_raw=_safe_read_json(entities_file),
@@ -481,46 +943,102 @@ def _sync_material_knowledge_points(material_id: int, limit: int = 24) -> int:
             key=lambda node: (int(node.get("degree") or 0), str(node.get("label") or "")),
             reverse=True,
         )
+        node_map = {str(node.get("id") or ""): node for node in nodes}
+        relation_labels: dict[str, list[str]] = {}
+        for edge in graph_payload.get("edges", []):
+            source = str(edge.get("source") or "")
+            target = str(edge.get("target") or "")
+            if source and target:
+                target_label = str(node_map.get(target, {}).get("label") or target)
+                source_label = str(node_map.get(source, {}).get("label") or source)
+                relation_labels.setdefault(source, []).append(target_label)
+                relation_labels.setdefault(target, []).append(source_label)
 
-        existing_names = {
-            str(name).strip().lower()
-            for (name,) in db.query(KnowledgePoint.name)
+        existing_points_by_key: dict[str, KnowledgePoint] = {}
+        existing_points_by_name: dict[str, KnowledgePoint] = {}
+        existing_records = (
+            db.query(KnowledgePoint)
             .filter(
                 KnowledgePoint.course_id == material.course_id,
                 KnowledgePoint.chapter_id == material.chapter_id,
             )
             .all()
-        }
+        )
+        for point in existing_records:
+            existing_points_by_name.setdefault(_normalize_alias_key(point.name), point)
+            for key in _knowledge_point_alias_keys(point.name):
+                current = existing_points_by_key.get(key)
+                if current is None or (
+                    _contains_cjk(point.name) and not _contains_cjk(current.name)
+                ):
+                    existing_points_by_key[key] = point
         created = 0
+        updated = 0
         for node in nodes:
             label = str(node.get("label") or node.get("id") or "").strip()
-            if not label or len(label) > 80 or label.lower() in existing_names:
+            if not label or len(label) > 80:
                 continue
+            display_name = _preferred_knowledge_point_name(label)
+            alias_keys = _knowledge_point_alias_keys(label) | _knowledge_point_alias_keys(display_name)
             degree = int(node.get("degree") or 0)
+            priority = _priority_from_graph_rank(created + 1, min(len(nodes), limit), degree)
+            related = relation_labels.get(str(node.get("id") or ""), [])
+            explanation = _derive_knowledge_point_explanation(
+                kb_dir,
+                node,
+                label,
+                related,
+                material,
+                display_name,
+            )
+            source_ref = (
+                f"kb:{material.kb_name};node:{node.get('id') or label};"
+                f"original_label:{label};explanation_method:{explanation['method']}"
+            )
+            existing = next(
+                (existing_points_by_key[key] for key in alias_keys if key in existing_points_by_key),
+                None,
+            )
+            if existing:
+                if refresh_existing and not existing.is_confirmed:
+                    if display_name and display_name != existing.name:
+                        name_conflict = existing_points_by_name.get(_normalize_alias_key(display_name))
+                        if not name_conflict or name_conflict.id == existing.id:
+                            existing.name = display_name
+                            existing_points_by_name[_normalize_alias_key(display_name)] = existing
+                    existing.description = explanation["description"]
+                    existing.priority = priority
+                    existing.source_material_id = material.id
+                    existing.source_type = material.source_type
+                    existing.source_ref = source_ref
+                    existing.updated_at = datetime.utcnow()
+                    updated += 1
+                continue
             point = KnowledgePoint(
                 course_id=material.course_id,
                 chapter_id=material.chapter_id,
                 source_material_id=material.id,
                 created_by_teacher_id=material.course.teacher_id if material.course else None,
-                name=label,
-                description=str(node.get("description") or ""),
-                priority=4 if degree >= 5 else 3,
+                name=display_name,
+                description=explanation["description"],
+                priority=priority,
                 source_type=material.source_type,
-                source_ref=f"kb:{material.kb_name};node:{node.get('id') or label}",
+                source_ref=source_ref,
                 is_confirmed=False,
             )
             db.add(point)
-            existing_names.add(label.lower())
+            for key in alias_keys:
+                existing_points_by_key.setdefault(key, point)
             created += 1
             if created >= limit:
                 break
 
-        if created:
+        if created or updated:
             db.commit()
-        return created
+        return {"created": created, "updated": updated}
     except Exception:
         db.rollback()
-        return 0
+        return {"created": 0, "updated": 0}
     finally:
         db.close()
 
@@ -532,6 +1050,7 @@ async def _run_course_material_initialization_task(
     _set_material_parse_status(material_id, "parsing")
     await run_initialization_task(initializer)
     if is_knowledge_base_initialized(initializer.kb_name):
+        await generate_node_explanation_cache(initializer.kb_name, refresh=False)
         _sync_material_knowledge_points(material_id)
     _set_material_parse_status(
         material_id,
@@ -558,6 +1077,7 @@ async def _run_course_material_upload_task(
         rag_provider=rag_provider,
     )
     if is_knowledge_base_initialized(kb_name):
+        await generate_node_explanation_cache(kb_name, refresh=False)
         _sync_material_knowledge_points(material_id)
     _set_material_parse_status(
         material_id,
@@ -1791,6 +2311,38 @@ async def delete_material(
     db.delete(material)
     db.commit()
     return {"success": True}
+
+
+@router.post("/materials/{material_id}/knowledge-points/sync")
+async def sync_material_knowledge_points(
+    material_id: int,
+    teacher_username: str,
+    refresh_existing: bool = True,
+    db: Session = Depends(get_db),
+):
+    teacher = _get_teacher_by_username(db, teacher_username)
+    material = _get_material(db, material_id)
+    _ensure_teacher_owns_course(teacher, material.course)
+
+    if not material.kb_name:
+        raise HTTPException(status_code=400, detail="该资料尚未关联可解析的知识图谱")
+    if not is_knowledge_base_initialized(material.kb_name):
+        raise HTTPException(status_code=400, detail="资料仍在解析中，完成后才能生成知识点")
+
+    await generate_node_explanation_cache(material.kb_name, refresh=False)
+    result = _sync_material_knowledge_points(material.id, refresh_existing=refresh_existing)
+    created = result["created"]
+    updated = result["updated"]
+    return {
+        "success": True,
+        "created_count": created,
+        "updated_count": updated,
+        "message": (
+            f"已生成 {created} 个候选知识点，更新 {updated} 个未确认解释"
+            if created or updated
+            else "没有新的候选知识点可生成"
+        ),
+    }
 
 
 @router.get("/{course_id}/knowledge-points")

@@ -162,6 +162,25 @@ class AgentCoordinator:
             api_version=self._api_version,
         )
 
+    def _has_kb_source(self) -> bool:
+        return bool(str(self.kb_name or "").strip())
+
+    def _build_direct_knowledge_context(self, requirement: dict[str, Any]) -> str:
+        topic = str(requirement.get("knowledge_point") or "").strip()
+        difficulty = str(requirement.get("difficulty") or "medium")
+        question_type = str(requirement.get("question_type") or "written")
+        cognitive_level = str(requirement.get("cognitive_level") or "understand")
+        extra = str(requirement.get("additional_requirements") or "").strip()
+        return (
+            "No external knowledge base was selected. Generate the question directly from "
+            "the teacher-provided knowledge point and constraints.\n"
+            f"Knowledge point: {topic}\n"
+            f"Difficulty: {difficulty}\n"
+            f"Question type: {question_type}\n"
+            f"Cognitive level: {cognitive_level}\n"
+            f"Additional requirements: {extra}"
+        )
+
     # =========================================================================
     # Main Entry Points
     # =========================================================================
@@ -192,23 +211,27 @@ class AgentCoordinator:
             "progress", {"stage": "generating", "progress": {"status": "initializing"}}
         )
 
-        # Step 1: Retrieve knowledge
-        retrieve_agent = self._create_retrieve_agent()
-        retrieval_result = await retrieve_agent.process(
-            requirement=requirement,
-            num_queries=self.rag_query_count,
-        )
+        # Step 1: Retrieve knowledge, or use the manual topic directly when no KB is selected.
+        if self._has_kb_source():
+            retrieve_agent = self._create_retrieve_agent()
+            retrieval_result = await retrieve_agent.process(
+                requirement=requirement,
+                num_queries=self.rag_query_count,
+            )
 
-        if not retrieval_result.get("has_content"):
-            self.logger.warning("No relevant knowledge found")
-            return {
-                "success": False,
-                "error": "knowledge_not_found",
-                "message": "Knowledge base does not contain relevant information.",
-            }
+            if not retrieval_result.get("has_content"):
+                self.logger.warning("No relevant knowledge found")
+                return {
+                    "success": False,
+                    "error": "knowledge_not_found",
+                    "message": "Knowledge base does not contain relevant information.",
+                }
 
-        knowledge_context = retrieval_result["summary"]
-        source_refs = self._build_source_refs(retrieval_result.get("retrievals", []))
+            knowledge_context = retrieval_result["summary"]
+            source_refs = self._build_source_refs(retrieval_result.get("retrievals", []))
+        else:
+            knowledge_context = self._build_direct_knowledge_context(requirement)
+            source_refs = []
 
         # Step 2: Generate question
         generate_agent = self._create_generate_agent()
@@ -318,24 +341,35 @@ class AgentCoordinator:
             {"stage": "researching", "progress": {"status": "retrieving"}, "total": num_questions},
         )
 
-        retrieve_agent = self._create_retrieve_agent()
-        retrieval_result = await retrieve_agent.process(
-            requirement=requirement,
-            num_queries=self.rag_query_count,
-        )
+        if self._has_kb_source():
+            retrieve_agent = self._create_retrieve_agent()
+            retrieval_result = await retrieve_agent.process(
+                requirement=requirement,
+                num_queries=self.rag_query_count,
+            )
 
-        if not retrieval_result.get("has_content"):
-            self.logger.warning("No relevant knowledge found")
-            return {
-                "success": False,
-                "error": "knowledge_not_found",
-                "message": "Knowledge base does not contain relevant information.",
-                "search_queries": retrieval_result.get("queries", []),
+            if not retrieval_result.get("has_content"):
+                self.logger.warning("No relevant knowledge found")
+                return {
+                    "success": False,
+                    "error": "knowledge_not_found",
+                    "message": "Knowledge base does not contain relevant information.",
+                    "search_queries": retrieval_result.get("queries", []),
+                }
+
+            knowledge_context = retrieval_result["summary"]
+            queries = retrieval_result["queries"]
+            source_refs = self._build_source_refs(retrieval_result.get("retrievals", []))
+        else:
+            retrieval_result = {
+                "has_content": True,
+                "summary": self._build_direct_knowledge_context(requirement),
+                "queries": [],
+                "retrievals": [],
             }
-
-        knowledge_context = retrieval_result["summary"]
-        queries = retrieval_result["queries"]
-        source_refs = self._build_source_refs(retrieval_result.get("retrievals", []))
+            knowledge_context = retrieval_result["summary"]
+            queries = []
+            source_refs = []
 
         resolved_type = normalize_question_type(requirement.get("question_type", "written"))
         cognitive_level = requirement.get("cognitive_level", "understand")

@@ -163,12 +163,21 @@ interface CourseMaterialOption {
   title?: string;
   display_name?: string;
   original_filename?: string | null;
+  chapter_id?: number | null;
+  chapter_title?: string;
+}
+
+interface KnowledgeBaseOption {
+  name: string;
+  display_name?: string;
+  is_default?: boolean;
 }
 
 interface CourseKnowledgePointOption {
   id: number;
   name: string;
   description?: string;
+  chapter_id?: number | null;
   chapter_title?: string;
   source_material_id?: number | null;
   priority: number;
@@ -212,6 +221,26 @@ type FollowupStrategy = "same" | "harder" | "easier" | "variant" | "to_choice";
 type PracticeMode = "practice" | "exam";
 
 const FILE_HINT = "支持格式：pdf、doc、docx、txt、md、rtf、html";
+const NO_KB_SOURCE = "__none__";
+const BLOOM_OPTIONS = [
+  { value: "understand", label: "基础理解" },
+  { value: "apply", label: "应用迁移" },
+  { value: "analyze", label: "分析评价" },
+];
+const inputClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-400";
+
+function bloomLabel(value?: string) {
+  return BLOOM_OPTIONS.find((item) => item.value === value)?.label || "基础理解";
+}
+
+function ConfigField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-xs font-medium text-slate-600">{label}</span>
+      {children}
+    </label>
+  );
+}
 
 function formatTime(ts?: number) {
   if (!ts) return "--";
@@ -777,7 +806,7 @@ export default function AssignmentReviewWorkspace() {
   const { session } = useAuth();
   const role = session?.role ?? "student";
 
-  const [kbs, setKbs] = useState<string[]>([]);
+  const [kbs, setKbs] = useState<KnowledgeBaseOption[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [submittedMap, setSubmittedMap] = useState<Record<number, boolean>>({});
@@ -791,9 +820,11 @@ export default function AssignmentReviewWorkspace() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [questionSourceMode, setQuestionSourceMode] = useState<QuestionSourceMode>("manual");
   const [courseOptions, setCourseOptions] = useState<CourseOption[]>([]);
+  const [questionChapters, setQuestionChapters] = useState<ChapterOption[]>([]);
   const [coursePoints, setCoursePoints] = useState<CourseKnowledgePointOption[]>([]);
   const [courseMaterials, setCourseMaterials] = useState<CourseMaterialOption[]>([]);
   const [selectedQuestionCourseId, setSelectedQuestionCourseId] = useState<number | null>(null);
+  const [selectedQuestionChapterId, setSelectedQuestionChapterId] = useState<number | null>(null);
   const [selectedQuestionPointId, setSelectedQuestionPointId] = useState<number | null>(null);
   const [generatedQuestionPointId, setGeneratedQuestionPointId] = useState<number | null>(null);
 
@@ -827,9 +858,20 @@ export default function AssignmentReviewWorkspace() {
   const isResult = questionState.step === "result";
   const currentQuestion = questionState.results[activeIndex];
   const canStartCustom = questionState.topic.trim().length > 0;
+  const selectedQuestionCourse = useMemo(
+    () => courseOptions.find((course) => course.id === selectedQuestionCourseId) || null,
+    [courseOptions, selectedQuestionCourseId],
+  );
+  const filteredCoursePoints = useMemo(
+    () =>
+      selectedQuestionChapterId === null
+        ? coursePoints
+        : coursePoints.filter((point) => (point.chapter_id ?? null) === selectedQuestionChapterId),
+    [coursePoints, selectedQuestionChapterId],
+  );
   const selectedCoursePoint = useMemo(
-    () => coursePoints.find((point) => point.id === selectedQuestionPointId) || null,
-    [coursePoints, selectedQuestionPointId],
+    () => filteredCoursePoints.find((point) => point.id === selectedQuestionPointId) || null,
+    [filteredCoursePoints, selectedQuestionPointId],
   );
   const selectedCoursePointKb = useMemo(() => {
     if (!selectedCoursePoint?.source_material_id) return "";
@@ -841,21 +883,45 @@ export default function AssignmentReviewWorkspace() {
     const material = courseMaterials.find((item) => item.id === selectedCoursePoint.source_material_id);
     return material?.display_name || material?.title || material?.original_filename || "";
   }, [courseMaterials, selectedCoursePoint]);
+  const sourceOptions = useMemo(() => {
+    const publicOptions = kbs.map((kb) => ({
+      value: kb.name,
+      label: kb.display_name || kb.name,
+    }));
+    const courseMaterialOptions = courseMaterials
+      .filter((material) => material.kb_name)
+      .map((material) => ({
+        value: material.kb_name || "",
+        label: `${selectedQuestionCourse?.name || "课程"} · ${
+          material.display_name || material.title || material.original_filename || material.kb_name
+        }${material.chapter_title ? `（${material.chapter_title}）` : ""}`,
+      }));
+    const merged = new Map<string, { value: string; label: string }>();
+    for (const option of [...courseMaterialOptions, ...publicOptions]) {
+      if (option.value && !merged.has(option.value)) merged.set(option.value, option);
+    }
+    return Array.from(merged.values());
+  }, [courseMaterials, kbs, selectedQuestionCourse?.name]);
 
   useEffect(() => {
     const controller = new AbortController();
     fetch(apiUrl("/api/v1/knowledge/list"), { signal: controller.signal })
       .then((res) => res.json())
       .then((data) => {
-        const names = Array.isArray(data) ? data.map((x: any) => x.name).filter(Boolean) : [];
-        setKbs(names);
-        if (!questionState.selectedKb && names.length > 0) {
-          setQuestionState((prev) => ({ ...prev, selectedKb: names[0] }));
-        }
+        const list = Array.isArray(data)
+          ? data
+              .map((x: any) => ({
+                name: String(x.name || ""),
+                display_name: x.display_name || x.description || x.name,
+                is_default: Boolean(x.is_default),
+              }))
+              .filter((item: KnowledgeBaseOption) => item.name)
+          : [];
+        setKbs(list);
       })
       .catch(() => setKbs([]));
     return () => controller.abort();
-  }, [questionState.selectedKb, setQuestionState]);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -893,8 +959,10 @@ export default function AssignmentReviewWorkspace() {
 
   useEffect(() => {
     if (!selectedQuestionCourseId) {
+      setQuestionChapters([]);
       setCoursePoints([]);
       setCourseMaterials([]);
+      setSelectedQuestionChapterId(null);
       setSelectedQuestionPointId(null);
       return;
     }
@@ -908,19 +976,27 @@ export default function AssignmentReviewWorkspace() {
       fetch(apiUrl(`/api/v1/courses/${selectedQuestionCourseId}/knowledge-points?${params.toString()}`), {
         signal: controller.signal,
       }).then((res) => res.json()),
+      fetch(apiUrl(`/api/v1/courses/${selectedQuestionCourseId}/chapters`), {
+        signal: controller.signal,
+      }).then((res) => res.json()),
       fetch(apiUrl(`/api/v1/courses/${selectedQuestionCourseId}/materials`), {
         signal: controller.signal,
       }).then((res) => res.json()),
     ])
-      .then(([pointData, materialData]) => {
+      .then(([pointData, chapterData, materialData]) => {
         const points = Array.isArray(pointData.knowledge_points) ? pointData.knowledge_points : [];
+        const chapters = Array.isArray(chapterData.chapters) ? chapterData.chapters : [];
         setCoursePoints(points);
+        setQuestionChapters(chapters);
         setCourseMaterials(Array.isArray(materialData.materials) ? materialData.materials : []);
-        setSelectedQuestionPointId((prev) =>
-          points.some((point: CourseKnowledgePointOption) => point.id === prev) ? prev : points[0]?.id ?? null,
-        );
+        setSelectedQuestionChapterId((prev) => {
+          if (chapters.some((chapter: ChapterOption) => chapter.id === prev)) return prev;
+          const firstPointChapterId = points.find((point: CourseKnowledgePointOption) => point.chapter_id)?.chapter_id;
+          return firstPointChapterId ?? chapters[0]?.id ?? null;
+        });
       })
       .catch(() => {
+        setQuestionChapters([]);
         setCoursePoints([]);
         setCourseMaterials([]);
       });
@@ -946,6 +1022,12 @@ export default function AssignmentReviewWorkspace() {
       .catch(() => setAssignmentChapters([]));
     return () => controller.abort();
   }, [assignmentCourseId]);
+
+  useEffect(() => {
+    setSelectedQuestionPointId((prev) =>
+      filteredCoursePoints.some((point) => point.id === prev) ? prev : filteredCoursePoints[0]?.id ?? null,
+    );
+  }, [filteredCoursePoints]);
 
   const loadTeacherAssignments = useCallback(async () => {
     if (!session?.username) return;
@@ -1451,7 +1533,7 @@ export default function AssignmentReviewWorkspace() {
         const item = questionState.results[idx];
         const answer = answers[idx] || "";
         const qType = String(item.question.question_type || "written");
-        if (qType === "written") {
+        if (["written", "essay", "subjective"].includes(qType.toLowerCase())) {
           const res = await fetch(apiUrl("/api/v1/question/evaluate/written"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1611,46 +1693,69 @@ export default function AssignmentReviewWorkspace() {
 
           {questionSourceMode === "course" && (
             <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
-              <div className="grid gap-3 md:grid-cols-[1fr_1.4fr]">
-                <select
-                  value={selectedQuestionCourseId ?? ""}
-                  onChange={(e) => setSelectedQuestionCourseId(Number(e.target.value) || null)}
-                  className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm"
-                >
-                  {courseOptions.length === 0 ? (
-                    <option value="">暂无课程</option>
-                  ) : (
-                    courseOptions.map((course) => (
-                      <option key={course.id} value={course.id}>
-                        {course.name}
-                      </option>
-                    ))
-                  )}
-                </select>
-                <select
-                  value={selectedQuestionPointId ?? ""}
-                  onChange={(e) => {
-                    const pointId = Number(e.target.value) || null;
-                    setSelectedQuestionPointId(pointId);
-                    const point = coursePoints.find((item) => item.id === pointId);
-                    if (point) {
-                      setQuestionState((prev) => ({ ...prev, topic: point.name }));
-                    }
-                  }}
-                  className="rounded-xl border border-indigo-100 bg-white px-3 py-2 text-sm"
-                >
-                  {coursePoints.length === 0 ? (
-                    <option value="">暂无知识点</option>
-                  ) : (
-                    coursePoints.map((point) => (
-                      <option key={point.id} value={point.id}>
-                        {point.chapter_title ? `${point.chapter_title} / ` : ""}
-                        {point.name}
-                        {point.is_confirmed ? "" : "（待确认）"}
-                      </option>
-                    ))
-                  )}
-                </select>
+              <div className="grid gap-3 md:grid-cols-3">
+                <ConfigField label="选择课程">
+                  <select
+                    value={selectedQuestionCourseId ?? ""}
+                    onChange={(e) => setSelectedQuestionCourseId(Number(e.target.value) || null)}
+                    className={inputClass}
+                  >
+                    {courseOptions.length === 0 ? (
+                      <option value="">暂无课程</option>
+                    ) : (
+                      courseOptions.map((course) => (
+                        <option key={course.id} value={course.id}>
+                          {course.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </ConfigField>
+                <ConfigField label="选择章节">
+                  <select
+                    value={selectedQuestionChapterId ?? ""}
+                    onChange={(e) => setSelectedQuestionChapterId(e.target.value ? Number(e.target.value) : null)}
+                    className={inputClass}
+                  >
+                    {questionChapters.length === 0 ? (
+                      <option value="">全部章节</option>
+                    ) : (
+                      <>
+                        <option value="">全部章节</option>
+                        {questionChapters.map((chapter) => (
+                          <option key={chapter.id} value={chapter.id}>
+                            {chapter.order_index}. {chapter.title}
+                          </option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </ConfigField>
+                <ConfigField label="选择知识点">
+                  <select
+                    value={selectedQuestionPointId ?? ""}
+                    onChange={(e) => {
+                      const pointId = Number(e.target.value) || null;
+                      setSelectedQuestionPointId(pointId);
+                      const point = filteredCoursePoints.find((item) => item.id === pointId);
+                      if (point) {
+                        setQuestionState((prev) => ({ ...prev, topic: point.name }));
+                      }
+                    }}
+                    className={inputClass}
+                  >
+                    {filteredCoursePoints.length === 0 ? (
+                      <option value="">暂无知识点</option>
+                    ) : (
+                      filteredCoursePoints.map((point) => (
+                        <option key={point.id} value={point.id}>
+                          {point.name}
+                          {point.is_confirmed ? "" : "（待确认）"}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </ConfigField>
               </div>
               <div className="mt-3 grid gap-3 md:grid-cols-[1fr_220px]">
                 <div className="rounded-lg bg-white/80 px-3 py-2 text-sm text-slate-600">
@@ -1666,56 +1771,91 @@ export default function AssignmentReviewWorkspace() {
           )}
 
           <div className="grid gap-3 md:grid-cols-2">
-            <input
-              value={questionState.topic}
-              onChange={(e) => {
-                setQuestionSourceMode("manual");
-                setQuestionState((p) => ({ ...p, topic: e.target.value }));
-              }}
-              className="rounded-xl border border-slate-200 px-3 py-2"
-              placeholder="知识点/主题"
-            />
-            <select value={questionState.selectedKb} onChange={(e) => setQuestionState((p) => ({ ...p, selectedKb: e.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2">{kbs.map((kb) => <option key={kb} value={kb}>{kb}</option>)}</select>
-            <select value={questionState.type} onChange={(e) => setQuestionState((p) => ({ ...p, type: e.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2">
-              <option value="choice">单选题</option>
-              <option value="multiple_choice">多选题</option>
-              <option value="true_false">判断题</option>
-              <option value="fill_blank">填空题</option>
-              <option value="matching">匹配题</option>
-              <option value="term_definition">关键词-定义配对</option>
-              <option value="ordering">步骤排序题</option>
-              <option value="written">问答题</option>
-              <option value="mixed">混合题</option>
-            </select>
-            <select value={questionState.bloomLevel || "understand"} onChange={(e) => setQuestionState((p) => ({ ...p, bloomLevel: e.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2">
-              <option value="remember">Bloom-记忆</option>
-              <option value="understand">Bloom-理解</option>
-              <option value="apply">Bloom-应用</option>
-              <option value="analyze">Bloom-分析</option>
-              <option value="evaluate">Bloom-评价</option>
-              <option value="create">Bloom-创造</option>
-            </select>
-            <select value={questionState.count} onChange={(e) => setQuestionState((p) => ({ ...p, count: Number(e.target.value) }))} className="rounded-xl border border-slate-200 px-3 py-2">
-              {[1, 2, 3, 4, 5].map((c) => <option key={c} value={c}>{`生成 ${c} 题`}</option>)}
-            </select>
-            <select
-              value={practiceMode}
-              onChange={(e) => setPracticeMode(e.target.value as PracticeMode)}
-              className="rounded-xl border border-slate-200 px-3 py-2"
-            >
-              <option value="practice">练习模式（即时评分）</option>
-              <option value="exam">考试模式（限时）</option>
-            </select>
-            <input
-              type="number"
-              min={1}
-              max={180}
-              value={timerMinutes}
-              onChange={(e) => setTimerMinutes(Math.max(1, Math.min(180, Number(e.target.value) || 1)))}
-              className="rounded-xl border border-slate-200 px-3 py-2"
-              placeholder="考试时长（分钟）"
-              disabled={practiceMode !== "exam"}
-            />
+            {questionSourceMode === "manual" && (
+              <>
+                <ConfigField label="知识点 / 主题">
+                  <input
+                    value={questionState.topic}
+                    onChange={(e) => setQuestionState((p) => ({ ...p, topic: e.target.value }))}
+                    className={inputClass}
+                    placeholder="例如：条件概率"
+                  />
+                </ConfigField>
+                <ConfigField label="资料来源">
+                  <select
+                    value={questionState.selectedKb || NO_KB_SOURCE}
+                    onChange={(e) =>
+                      setQuestionState((p) => ({
+                        ...p,
+                        selectedKb: e.target.value === NO_KB_SOURCE ? "" : e.target.value,
+                      }))
+                    }
+                    className={inputClass}
+                  >
+                    <option value={NO_KB_SOURCE}>无资料来源（仅按输入知识点出题）</option>
+                    {sourceOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </ConfigField>
+              </>
+            )}
+            <ConfigField label="题型">
+              <select value={questionState.type} onChange={(e) => setQuestionState((p) => ({ ...p, type: e.target.value }))} className={inputClass}>
+                <option value="choice">单选题</option>
+                <option value="multiple_choice">多选题</option>
+                <option value="true_false">判断题</option>
+                <option value="fill_blank">填空题</option>
+                <option value="matching">匹配题</option>
+                <option value="term_definition">关键词-定义配对</option>
+                <option value="ordering">步骤排序题</option>
+                <option value="written">问答题</option>
+                <option value="mixed">混合题</option>
+              </select>
+            </ConfigField>
+            <ConfigField label="Bloom 模式">
+              <select value={questionState.bloomLevel || "understand"} onChange={(e) => setQuestionState((p) => ({ ...p, bloomLevel: e.target.value }))} className={inputClass}>
+                {BLOOM_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </ConfigField>
+            <ConfigField label="题量">
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={questionState.count}
+                onChange={(e) => setQuestionState((p) => ({ ...p, count: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }))}
+                className={inputClass}
+              />
+            </ConfigField>
+            <ConfigField label="练习模式">
+              <select
+                value={practiceMode}
+                onChange={(e) => setPracticeMode(e.target.value as PracticeMode)}
+                className={inputClass}
+              >
+                <option value="practice">练习模式（即时评分）</option>
+                <option value="exam">考试模式（限时）</option>
+              </select>
+            </ConfigField>
+            {practiceMode === "exam" && (
+              <ConfigField label="考试时长（分钟）">
+                <input
+                  type="number"
+                  min={1}
+                  max={180}
+                  value={timerMinutes}
+                  onChange={(e) => setTimerMinutes(Math.max(1, Math.min(180, Number(e.target.value) || 1)))}
+                  className={inputClass}
+                />
+              </ConfigField>
+            )}
           </div>
           <button
             onClick={questionSourceMode === "course" ? startCoursePointQuestion : startCustom}
@@ -1809,7 +1949,7 @@ export default function AssignmentReviewWorkspace() {
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                 <span>
                   第 {activeIndex + 1}/{questionState.results.length} 题 · {currentQuestion.question.question_type} ·
-                  Bloom {currentQuestion.question.cognitive_level || "understand"}
+                  Bloom {bloomLabel(currentQuestion.question.cognitive_level)}
                 </span>
                 {practiceMode === "exam" && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">

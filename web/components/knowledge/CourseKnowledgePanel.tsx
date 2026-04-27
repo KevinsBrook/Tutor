@@ -179,14 +179,21 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
   const [progress, setProgress] = useState<Record<string, KnowledgeBaseProgress>>({});
   const [graphPreview, setGraphPreview] = useState<KnowledgeGraphPreview | null>(null);
   const [graphTitle, setGraphTitle] = useState("");
+  const [graphMaterialId, setGraphMaterialId] = useState<number | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [syncingMaterialId, setSyncingMaterialId] = useState<number | null>(null);
 
   const [courseForm, setCourseForm] = useState({ name: "", description: "" });
   const [chapterForm, setChapterForm] = useState({ title: "", description: "", order_index: "1" });
+  const [chapterFile, setChapterFile] = useState<File | null>(null);
+  const [chapterMaterialForm, setChapterMaterialForm] = useState({ title: "", description: "" });
+  const [chapterProviderId, setChapterProviderId] = useState("raganything");
   const [uploadForm, setUploadForm] = useState({ title: "", description: "" });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [providerId, setProviderId] = useState("raganything");
   const [pointForm, setPointForm] = useState({ name: "", description: "", priority: "3" });
+  const [editingPointId, setEditingPointId] = useState<number | null>(null);
+  const [pointDraft, setPointDraft] = useState({ name: "", description: "", priority: "3" });
 
   const selectedCourse = useMemo(
     () => courses.find((course) => course.id === courseId) || null,
@@ -217,6 +224,10 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
   const selectedProvider = providers.find((provider) => provider.id === providerId) || providers[0];
   const selectedExtensions =
     selectedProvider?.supported_extensions || PROVIDER_EXTENSIONS[providerId] || PROVIDER_EXTENSIONS.raganything;
+  const getProviderExtensions = (id: string) =>
+    providers.find((provider) => provider.id === id)?.supported_extensions ||
+    PROVIDER_EXTENSIONS[id] ||
+    PROVIDER_EXTENSIONS.raganything;
 
   const requestJson = async <T,>(url: string, options?: RequestInit): Promise<T> => {
     const res = await fetch(apiUrl(url), options);
@@ -235,6 +246,7 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
       }));
       setProviders(next);
       setProviderId((prev) => (next.some((item) => item.id === prev) ? prev : next[0]?.id || "raganything"));
+      setChapterProviderId((prev) => (next.some((item) => item.id === prev) ? prev : next[0]?.id || "raganything"));
     } catch {
       setProviders(FALLBACK_PROVIDERS);
     }
@@ -386,10 +398,22 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
           order_index: Number(chapterForm.order_index) || nextChapterOrder,
         }),
       });
+      if (chapterFile) {
+        await uploadMaterialToCourse({
+          file: chapterFile,
+          chapterId: data.chapter.id,
+          title: chapterMaterialForm.title || chapterFile.name,
+          description: chapterMaterialForm.description,
+          provider: chapterProviderId,
+        });
+      }
       setChapterForm({ title: "", description: "", order_index: String(nextChapterOrder + 1) });
+      setChapterFile(null);
+      setChapterMaterialForm({ title: "", description: "" });
       setModal(null);
       await loadCourseDetail(courseId, true);
       setSelectedChapterId(data.chapter.id);
+      setMessage(chapterFile ? "章节已创建，资料正在解析" : "章节已创建");
     } catch (error: any) {
       setMessage(error.message || "章节创建失败");
     } finally {
@@ -397,25 +421,50 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
     }
   };
 
-  const uploadMaterial = async () => {
-    if (!session?.username || !courseId || !uploadFile) return;
-    const ext = `.${uploadFile.name.split(".").pop()?.toLowerCase() || ""}`;
-    if (!selectedExtensions.includes(ext)) {
-      setMessage(`${selectedProvider?.name || providerId} 不支持 ${ext} 文件，请选择：${selectedExtensions.join(" / ")}`);
+  const uploadMaterialToCourse = async ({
+    file,
+    chapterId,
+    title,
+    description,
+    provider,
+  }: {
+    file: File;
+    chapterId: number | null;
+    title: string;
+    description: string;
+    provider: string;
+  }) => {
+    if (!session?.username || !courseId) return;
+    const ext = `.${file.name.split(".").pop()?.toLowerCase() || ""}`;
+    const providerExtensions = getProviderExtensions(provider);
+    const providerName = providers.find((item) => item.id === provider)?.name || provider;
+    if (!providerExtensions.includes(ext)) {
+      setMessage(`${providerName} 不支持 ${ext} 文件，请选择：${providerExtensions.join(" / ")}`);
       return;
     }
+    const form = new FormData();
+    form.append("uploader_username", session.username);
+    form.append("title", (title || file.name).trim());
+    form.append("description", description.trim());
+    form.append("source_type", isTeacher ? "teacher_material" : "student_note");
+    form.append("material_scope", chapterId ? "chapter" : "course_public");
+    form.append("rag_provider", provider);
+    if (chapterId) form.append("chapter_id", String(chapterId));
+    form.append("file", file);
+    await requestJson(`/api/v1/courses/${courseId}/materials/upload`, { method: "POST", body: form });
+  };
+
+  const uploadMaterial = async () => {
+    if (!session?.username || !courseId || !uploadFile) return;
     setLoading(true);
     try {
-      const form = new FormData();
-      form.append("uploader_username", session.username);
-      form.append("title", (uploadForm.title || uploadFile.name).trim());
-      form.append("description", uploadForm.description.trim());
-      form.append("source_type", isTeacher ? "teacher_material" : "student_note");
-      form.append("material_scope", selectedChapterId ? "chapter" : "course_public");
-      form.append("rag_provider", providerId);
-      if (selectedChapterId) form.append("chapter_id", String(selectedChapterId));
-      form.append("file", uploadFile);
-      await requestJson(`/api/v1/courses/${courseId}/materials/upload`, { method: "POST", body: form });
+      await uploadMaterialToCourse({
+        file: uploadFile,
+        chapterId: selectedChapterId,
+        title: uploadForm.title || uploadFile.name,
+        description: uploadForm.description,
+        provider: providerId,
+      });
       setUploadForm({ title: "", description: "" });
       setUploadFile(null);
       setModal(null);
@@ -423,6 +472,45 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
       setMessage("资料已上传，解析完成后即可用于出题与检索");
     } catch (error: any) {
       setMessage(error.message || "资料上传失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startEditPoint = (point: KnowledgePoint) => {
+    setEditingPointId(point.id);
+    setPointDraft({
+      name: point.name,
+      description: point.description || "",
+      priority: String(point.priority || 3),
+    });
+  };
+
+  const updatePoint = async (point: KnowledgePoint, patch: Partial<{ name: string; description: string; priority: number; is_confirmed: boolean }>) => {
+    if (!session?.username || !courseId) return;
+    await requestJson(`/api/v1/courses/knowledge-points/${point.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        teacher_username: session.username,
+        ...patch,
+      }),
+    });
+    await loadCourseDetail(courseId, true);
+  };
+
+  const savePointDraft = async (point: KnowledgePoint) => {
+    if (!pointDraft.name.trim()) return;
+    setLoading(true);
+    try {
+      await updatePoint(point, {
+        name: pointDraft.name.trim(),
+        description: pointDraft.description.trim(),
+        priority: Number(pointDraft.priority) || 3,
+      });
+      setEditingPointId(null);
+    } catch (error: any) {
+      setMessage(error.message || "知识点更新失败");
     } finally {
       setLoading(false);
     }
@@ -479,6 +567,24 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
     await loadCourseDetail(courseId, true);
   };
 
+  const syncMaterialPoints = async (material: Material) => {
+    if (!session?.username || !courseId) return;
+    setSyncingMaterialId(material.id);
+    setMessage("");
+    try {
+      const data = await requestJson<{ created_count: number; updated_count?: number; message?: string }>(
+        `/api/v1/courses/materials/${material.id}/knowledge-points/sync?teacher_username=${encodeURIComponent(session.username)}&refresh_existing=true`,
+        { method: "POST" },
+      );
+      await loadCourseDetail(courseId, true);
+      setMessage(data.message || `已生成 ${data.created_count} 个候选知识点`);
+    } catch (error: any) {
+      setMessage(error.message || "生成知识点失败");
+    } finally {
+      setSyncingMaterialId(null);
+    }
+  };
+
   const deletePoint = async (point: KnowledgePoint) => {
     if (!session?.username || !courseId || !window.confirm(`确定删除知识点“${point.name}”吗？`)) return;
     await requestJson(
@@ -486,6 +592,52 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
       { method: "DELETE" },
     );
     await loadCourseDetail(courseId, true);
+  };
+
+  const confirmVisiblePoints = async () => {
+    if (!session?.username || !courseId) return;
+    const candidates = visiblePoints.filter((point) => !point.is_confirmed);
+    if (!candidates.length) {
+      setMessage("当前区域没有待确认知识点");
+      return;
+    }
+    setLoading(true);
+    try {
+      await Promise.all(candidates.map((point) => updatePoint(point, { is_confirmed: true })));
+      await loadCourseDetail(courseId, true);
+      setMessage(`已确认 ${candidates.length} 个知识点`);
+    } catch (error: any) {
+      setMessage(error.message || "批量确认失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteVisiblePoints = async () => {
+    if (!session?.username || !courseId) return;
+    if (!visiblePoints.length) {
+      setMessage("当前区域没有可删除知识点");
+      return;
+    }
+    const scope = selectedChapter ? `章节“${selectedChapter.title}”` : "课程公共资料区";
+    if (!window.confirm(`确定删除${scope}下的 ${visiblePoints.length} 个知识点吗？`)) return;
+    setLoading(true);
+    try {
+      await Promise.all(
+        visiblePoints.map((point) =>
+          requestJson(
+            `/api/v1/courses/knowledge-points/${point.id}?teacher_username=${encodeURIComponent(session.username)}`,
+            { method: "DELETE" },
+          ),
+        ),
+      );
+      await loadCourseDetail(courseId, true);
+      setMessage(`已删除 ${visiblePoints.length} 个知识点`);
+    } catch (error: any) {
+      setMessage(error.message || "批量删除失败");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const recordMastery = async (point: KnowledgePoint, isCorrect: boolean) => {
@@ -507,6 +659,7 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
     if (!material.kb_name) return;
     setGraphLoading(true);
     setGraphTitle(materialName(material));
+    setGraphMaterialId(material.id);
     try {
       const data = await requestJson<KnowledgeGraphPreview>(
         `/api/v1/knowledge/${encodeURIComponent(material.kb_name)}/graph?max_nodes=80&max_edges=160&min_degree=0&filter_noise=true`,
@@ -518,6 +671,13 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
     } finally {
       setGraphLoading(false);
     }
+  };
+
+  const pointExplanation = (point: KnowledgePoint) => {
+    if (point.description?.trim()) return point.description.trim();
+    const source = point.source_material_title ? `，来源于资料「${point.source_material_title}」` : "";
+    const chapter = point.chapter_title ? `本章节「${point.chapter_title}」` : "本课程";
+    return `${point.name} 是${chapter}${source}中抽取出的概念或主题。当前还没有更详细说明，教师可在确认前补充定义、边界和典型应用场景。`;
   };
 
   const handleUploadFile = (file: File | null) => {
@@ -779,8 +939,30 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
                                 <Network className="h-3.5 w-3.5" />
                                 查看图谱
                               </button>
+                              {isTeacher && (
+                                <button
+                                  disabled={material.parse_status !== "parsed" || syncingMaterialId === material.id}
+                                  onClick={() => syncMaterialPoints(material)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200"
+                                >
+                                  {syncingMaterialId === material.id ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <BookOpen className="h-3.5 w-3.5" />
+                                  )}
+                                  生成知识点
+                                </button>
+                              )}
                             </div>
                           )}
+                          {(graphLoading && graphMaterialId === material.id) ||
+                          (graphPreview && graphMaterialId === material.id) ? (
+                            <GraphPreviewPanel
+                              loading={graphLoading && graphMaterialId === material.id}
+                              preview={graphMaterialId === material.id ? graphPreview : null}
+                              title={graphTitle || materialName(material)}
+                            />
+                          ) : null}
                         </div>
                       );
                     })}
@@ -789,9 +971,31 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
               </div>
 
               <div>
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                  <BookOpen className="h-4 w-4 text-emerald-600" />
-                  知识点
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    <BookOpen className="h-4 w-4 text-emerald-600" />
+                    知识点
+                  </div>
+                  {isTeacher && visiblePoints.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                        onClick={confirmVisiblePoints}
+                        disabled={loading || visiblePoints.every((point) => point.is_confirmed)}
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        一键确认
+                      </button>
+                      <button
+                        className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                        onClick={deleteVisiblePoints}
+                        disabled={loading}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        一键删除
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {visiblePoints.length === 0 ? (
                   <Empty text="暂无知识点。资料解析后会生成候选知识点，教师也可以手动添加。" />
@@ -802,40 +1006,86 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
                       const masteryValue = Math.round((mastery?.mastery_level || 0) * 100);
                       return (
                         <div key={point.id} className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h3 className="font-semibold text-slate-950 dark:text-slate-50">{point.name}</h3>
-                              <p className="mt-1 text-xs text-slate-500">
-                                优先级 {PRIORITY_OPTIONS.find((item) => Number(item.value) === point.priority)?.label || "中"} ·{" "}
-                                {point.is_confirmed ? "已确认" : "待确认"}
-                                {point.source_material_title ? ` · 来源：${point.source_material_title}` : ""}
-                              </p>
-                            </div>
-                            {point.is_confirmed && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
-                          </div>
-                          {point.description && <p className="mt-2 text-sm leading-5 text-slate-600 dark:text-slate-300">{point.description}</p>}
-                          {isStudent && (
-                            <div className="mt-3">
-                              <div className="mb-1 flex justify-between text-xs text-slate-500">
-                                <span>掌握度 {masteryValue}%</span>
-                                <span>对 {mastery?.correct_count || 0} · 错 {mastery?.wrong_count || 0}</span>
+                          {editingPointId === point.id ? (
+                            <div className="space-y-3">
+                              <input
+                                className={inputClass}
+                                value={pointDraft.name}
+                                onChange={(event) => setPointDraft((prev) => ({ ...prev, name: event.target.value }))}
+                              />
+                              <textarea
+                                className={`${inputClass} h-20 resize-none`}
+                                value={pointDraft.description}
+                                onChange={(event) => setPointDraft((prev) => ({ ...prev, description: event.target.value }))}
+                              />
+                              <select
+                                className={inputClass}
+                                value={pointDraft.priority}
+                                onChange={(event) => setPointDraft((prev) => ({ ...prev, priority: event.target.value }))}
+                              >
+                                {PRIORITY_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <div className="flex gap-2">
+                                <button className={primaryButton} onClick={() => savePointDraft(point)} disabled={loading || !pointDraft.name.trim()}>
+                                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "保存"}
+                                </button>
+                                <button className={secondaryButton} onClick={() => setEditingPointId(null)}>
+                                  取消
+                                </button>
                               </div>
-                              <div className="h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${masteryValue}%` }} />
-                              </div>
-                              <div className="mt-2 flex gap-2">
-                                <button className={actionButton} onClick={() => recordMastery(point, true)}>会了</button>
-                                <button className={actionButton} onClick={() => recordMastery(point, false)}>还要练</button>
-                              </div>
                             </div>
-                          )}
-                          {isTeacher && (
-                            <div className="mt-3">
-                              <button className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50" onClick={() => deletePoint(point)}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                                删除
-                              </button>
-                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <h3 className="font-semibold text-slate-950 dark:text-slate-50">{point.name}</h3>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    优先级 {PRIORITY_OPTIONS.find((item) => Number(item.value) === point.priority)?.label || "中"} ·{" "}
+                                    {point.is_confirmed ? "已确认" : "待确认"}
+                                    {point.source_material_title ? ` · 来源：${point.source_material_title}` : ""}
+                                  </p>
+                                </div>
+                                {point.is_confirmed && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
+                              </div>
+                              <p className="mt-2 text-sm leading-5 text-slate-600 dark:text-slate-300">{pointExplanation(point)}</p>
+                              {isStudent && (
+                                <div className="mt-3">
+                                  <div className="mb-1 flex justify-between text-xs text-slate-500">
+                                    <span>掌握度 {masteryValue}%</span>
+                                    <span>对 {mastery?.correct_count || 0} · 错 {mastery?.wrong_count || 0}</span>
+                                  </div>
+                                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${masteryValue}%` }} />
+                                  </div>
+                                  <div className="mt-2 flex gap-2">
+                                    <button className={actionButton} onClick={() => recordMastery(point, true)}>会了</button>
+                                    <button className={actionButton} onClick={() => recordMastery(point, false)}>还要练</button>
+                                  </div>
+                                </div>
+                              )}
+                              {isTeacher && (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <button
+                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50"
+                                    onClick={() => updatePoint(point, { is_confirmed: !point.is_confirmed })}
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    {point.is_confirmed ? "取消确认" : "确认"}
+                                  </button>
+                                  <button className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-600 hover:bg-slate-50" onClick={() => startEditPoint(point)}>
+                                    编辑
+                                  </button>
+                                  <button className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50" onClick={() => deletePoint(point)}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    删除
+                                  </button>
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       );
@@ -843,43 +1093,6 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
                   </div>
                 )}
               </div>
-
-              {(graphLoading || graphPreview) && (
-                <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-4 dark:border-teal-900 dark:bg-teal-950/25">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      <Network className="h-4 w-4 text-teal-700" />
-                      {graphTitle || "资料知识图谱"}
-                    </h3>
-                    {graphPreview?.kb_name && (
-                      <Link href={`/knowledge/${encodeURIComponent(graphPreview.kb_name)}/graph`} className="text-xs font-medium text-teal-700 hover:underline">
-                        打开完整图谱
-                      </Link>
-                    )}
-                  </div>
-                  {graphLoading ? (
-                    <div className="mt-3 flex items-center gap-2 text-sm text-slate-500">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      正在读取图谱
-                    </div>
-                  ) : graphPreview ? (
-                    <div className="mt-3 space-y-3">
-                      <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
-                        <span className="rounded-md bg-white px-2 py-1 dark:bg-slate-900">节点 {graphPreview.stats?.returned_nodes ?? graphPreview.nodes.length}</span>
-                        <span className="rounded-md bg-white px-2 py-1 dark:bg-slate-900">关系 {graphPreview.stats?.returned_edges ?? graphPreview.edges.length}</span>
-                        <span className="rounded-md bg-white px-2 py-1 dark:bg-slate-900">{graphPreview.stats?.truncated ? "已截断预览" : "完整预览"}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {graphPreview.nodes.slice(0, 18).map((node) => (
-                          <span key={node.id} className="rounded-full border border-teal-200 bg-white px-2 py-1 text-xs text-teal-800 dark:border-teal-900 dark:bg-slate-900 dark:text-teal-200">
-                            {node.label || node.id}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              )}
             </div>
           )}
         </main>
@@ -890,6 +1103,17 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
         loading={loading}
         form={chapterForm}
         setForm={setChapterForm}
+        file={chapterFile}
+        onFile={(file) => {
+          setChapterFile(file);
+          if (file) setChapterMaterialForm((prev) => ({ ...prev, title: prev.title || file.name }));
+        }}
+        materialForm={chapterMaterialForm}
+        setMaterialForm={setChapterMaterialForm}
+        providers={providers}
+        providerId={chapterProviderId}
+        setProviderId={setChapterProviderId}
+        accept={getProviderExtensions(chapterProviderId).join(",")}
         onClose={() => setModal(null)}
         onSubmit={createChapter}
       />
@@ -925,6 +1149,55 @@ function Empty({ text }: { text: string }) {
   return (
     <div className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700">
       {text}
+    </div>
+  );
+}
+
+function GraphPreviewPanel({
+  loading,
+  preview,
+  title,
+}: {
+  loading: boolean;
+  preview: KnowledgeGraphPreview | null;
+  title: string;
+}) {
+  return (
+    <div className="mt-3 rounded-lg border border-teal-200 bg-teal-50/70 p-3 dark:border-teal-900 dark:bg-teal-950/25">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+          <Network className="h-4 w-4 text-teal-700" />
+          {title}
+        </h4>
+        {preview?.kb_name && (
+          <Link href={`/knowledge/${encodeURIComponent(preview.kb_name)}/graph`} className="text-xs font-medium text-teal-700 hover:underline">
+            打开完整图谱
+          </Link>
+        )}
+      </div>
+      {loading ? (
+        <div className="mt-3 flex items-center gap-2 text-sm text-slate-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          正在读取图谱
+        </div>
+      ) : preview ? (
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+            <span className="rounded-md bg-white px-2 py-1 dark:bg-slate-900">节点 {preview.stats?.returned_nodes ?? preview.nodes.length}</span>
+            <span className="rounded-md bg-white px-2 py-1 dark:bg-slate-900">关系 {preview.stats?.returned_edges ?? preview.edges.length}</span>
+            <span className="rounded-md bg-white px-2 py-1 dark:bg-slate-900">{preview.stats?.truncated ? "已截断预览" : "完整预览"}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {preview.nodes.slice(0, 18).map((node) => (
+              <span key={node.id} className="rounded-full border border-teal-200 bg-white px-2 py-1 text-xs text-teal-800 dark:border-teal-900 dark:bg-slate-900 dark:text-teal-200">
+                {node.label || node.id}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-slate-500">暂无可展示的图谱节点。</p>
+      )}
     </div>
   );
 }
@@ -1018,6 +1291,14 @@ function ChapterModal({
   loading,
   form,
   setForm,
+  file,
+  onFile,
+  materialForm,
+  setMaterialForm,
+  providers,
+  providerId,
+  setProviderId,
+  accept,
   onClose,
   onSubmit,
 }: {
@@ -1025,6 +1306,14 @@ function ChapterModal({
   loading: boolean;
   form: { title: string; description: string; order_index: string };
   setForm: (form: { title: string; description: string; order_index: string }) => void;
+  file: File | null;
+  onFile: (file: File | null) => void;
+  materialForm: { title: string; description: string };
+  setMaterialForm: (form: { title: string; description: string }) => void;
+  providers: RagProvider[];
+  providerId: string;
+  setProviderId: (id: string) => void;
+  accept: string;
   onClose: () => void;
   onSubmit: () => void;
 }) {
@@ -1035,17 +1324,59 @@ function ChapterModal({
           <Field label="章节标题">
             <input className={inputClass} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
           </Field>
-          <Field label="顺序">
+          <Field label="章节编号">
             <input type="number" min="1" className={inputClass} value={form.order_index} onChange={(event) => setForm({ ...form, order_index: event.target.value })} />
           </Field>
         </div>
         <Field label="章节说明">
           <textarea className={`${inputClass} h-24 resize-none`} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
         </Field>
+        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+            <Upload className="h-4 w-4 text-emerald-600" />
+            同时上传资料
+          </div>
+          <div className="space-y-3">
+            <Field label="资料文件">
+              <input
+                className={inputClass}
+                type="file"
+                accept={accept}
+                onChange={(event) => onFile(event.target.files?.[0] || null)}
+              />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="资料名称">
+                <input
+                  className={inputClass}
+                  value={materialForm.title}
+                  placeholder={file?.name || "默认使用上传文件名"}
+                  onChange={(event) => setMaterialForm({ ...materialForm, title: event.target.value })}
+                />
+              </Field>
+              <Field label="RAG 提供方">
+                <select className={inputClass} value={providerId} onChange={(event) => setProviderId(event.target.value)}>
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <Field label="资料说明">
+              <textarea
+                className={`${inputClass} h-16 resize-none`}
+                value={materialForm.description}
+                onChange={(event) => setMaterialForm({ ...materialForm, description: event.target.value })}
+              />
+            </Field>
+          </div>
+        </div>
         <div className="flex gap-3 pt-2">
           <button className={secondaryButton} onClick={onClose}>取消</button>
           <button className={primaryButton} onClick={onSubmit} disabled={loading || !form.title.trim()}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "创建章节"}
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : file ? "创建章节并解析资料" : "创建章节"}
           </button>
         </div>
       </div>

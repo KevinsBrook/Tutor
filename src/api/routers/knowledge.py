@@ -57,6 +57,7 @@ router = APIRouter()
 BYTES_PER_GB = 1024**3
 BYTES_PER_MB = 1024**2
 DEFAULT_RAG_PROVIDER = "raganything"
+NODE_EXPLANATION_CACHE_FILE = "node_explanations.json"
 
 
 def normalize_rag_provider(provider: str | None, *, allow_default: bool = True) -> str:
@@ -463,6 +464,48 @@ def _get_dict_value_case_insensitive(data: dict[str, Any], key: str) -> Any | No
         if isinstance(k, str) and k.lower() == lower_key:
             return v
     return None
+
+
+def _node_explanation_cache_path(kb_dir: Path) -> Path:
+    return kb_dir / "rag_storage" / NODE_EXPLANATION_CACHE_FILE
+
+
+def _read_node_explanation_cache(kb_dir: Path) -> dict[str, Any]:
+    cache_file = _node_explanation_cache_path(kb_dir)
+    if not cache_file.exists():
+        return {"version": 1, "nodes": {}}
+    try:
+        data = _safe_read_json(cache_file)
+        if isinstance(data, dict):
+            nodes = data.get("nodes")
+            if isinstance(nodes, dict):
+                return data
+    except Exception:
+        pass
+    return {"version": 1, "nodes": {}}
+
+
+def _write_node_explanation_cache(kb_dir: Path, cache: dict[str, Any]) -> None:
+    cache_file = _node_explanation_cache_path(kb_dir)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache_file, "w", encoding="utf-8") as fp:
+        json.dump(cache, fp, indent=2, ensure_ascii=False)
+
+
+def _estimate_node_explanation_confidence(explanation: str, source: str) -> int:
+    if not explanation:
+        return 0
+    if source.startswith("llm_generated"):
+        return 86
+    if source.endswith("_zh"):
+        return 82
+    if source == "vdb_entities":
+        return 72
+    if source == "graph_description":
+        return 68
+    if source == "snippet_heuristic":
+        return 58
+    return 50
 
 
 _kb_base_dir = _project_root / "data" / "knowledge_bases"
@@ -1254,6 +1297,106 @@ async def get_graph_node_detail(
     except Exception as e:
         logger.error(f"Error loading node detail for KB '{kb_name}', node '{node_id}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def generate_node_explanation_cache(
+    kb_name: str,
+    *,
+    use_llm: bool = True,
+    force_chinese: bool = True,
+    refresh: bool = False,
+    max_nodes: int = 5000,
+) -> dict[str, Any]:
+    """Precompute graph node explanations using the same path as node-detail."""
+    manager = get_kb_manager()
+    kb_dir = manager.get_knowledge_base_path(kb_name)
+    rag_storage_dir = kb_dir / "rag_storage"
+    entities_file = rag_storage_dir / "kv_store_full_entities.json"
+    relations_file = rag_storage_dir / "kv_store_full_relations.json"
+
+    if not entities_file.exists() or not relations_file.exists():
+        return {"success": False, "cached_count": 0, "message": "Graph data not found"}
+
+    graph_payload = _build_graph_payload(
+        entities_raw=_safe_read_json(entities_file),
+        relations_raw=_safe_read_json(relations_file),
+        max_nodes=max_nodes,
+        max_edges=20000,
+        min_degree=0,
+        filter_noise=True,
+    )
+    cache = _read_node_explanation_cache(kb_dir)
+    cache_nodes = cache.setdefault("nodes", {})
+    if not isinstance(cache_nodes, dict):
+        cache_nodes = {}
+        cache["nodes"] = cache_nodes
+
+    cached_count = 0
+    skipped_count = 0
+    failed_count = 0
+    for node in graph_payload.get("nodes", []):
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            continue
+        if not refresh and isinstance(cache_nodes.get(node_id), dict):
+            existing = cache_nodes[node_id]
+            if str(existing.get("explanation") or "").strip():
+                skipped_count += 1
+                continue
+        try:
+            detail = await get_graph_node_detail(
+                kb_name=kb_name,
+                node_id=node_id,
+                use_llm=use_llm,
+                force_chinese=force_chinese,
+                max_neighbors=20,
+            )
+            explanation = _truncate_text(str(detail.get("explanation") or ""), 900)
+            source = str(detail.get("explanation_source") or "none")
+            cache_nodes[node_id] = {
+                "id": node_id,
+                "label": str(detail.get("node", {}).get("label") or node.get("label") or node_id),
+                "type": str(detail.get("node", {}).get("type") or node.get("type") or "entity"),
+                "degree": int(detail.get("node", {}).get("degree") or node.get("degree") or 0),
+                "explanation": explanation,
+                "explanation_source": source,
+                "confidence": _estimate_node_explanation_confidence(explanation, source),
+                "snippet_count": int(detail.get("snippet_count") or 0),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            cached_count += 1
+        except Exception as exc:
+            cache_nodes[node_id] = {
+                "id": node_id,
+                "label": str(node.get("label") or node_id),
+                "type": str(node.get("type") or "entity"),
+                "degree": int(node.get("degree") or 0),
+                "explanation": "",
+                "explanation_source": "error",
+                "confidence": 0,
+                "error": str(exc),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            failed_count += 1
+
+    cache.update(
+        {
+            "version": 1,
+            "kb_name": kb_name,
+            "generated_at": datetime.utcnow().isoformat(),
+            "use_llm": use_llm,
+            "force_chinese": force_chinese,
+            "max_nodes": max_nodes,
+            "stats": {
+                "graph_nodes": len(graph_payload.get("nodes", [])),
+                "cached_count": cached_count,
+                "skipped_count": skipped_count,
+                "failed_count": failed_count,
+            },
+        }
+    )
+    _write_node_explanation_cache(kb_dir, cache)
+    return {"success": True, **cache["stats"]}
 
 
 @router.delete("/{kb_name}")
