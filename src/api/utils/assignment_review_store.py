@@ -68,7 +68,8 @@ class AssignmentReviewStore:
         title: str,
         description: str,
         rubric_items: list[dict[str, Any]],
-        files: list[dict[str, Any]],
+        criteria_items: list[dict[str, Any]] | None = None,
+        files: list[dict[str, Any]] | None = None,
         assignment_id: str | None = None,
         course_id: int | None = None,
         chapter_id: int | None = None,
@@ -92,7 +93,8 @@ class AssignmentReviewStore:
                 "course_name": course_name,
                 "chapter_title": chapter_title,
                 "rubric_items": rubric_items,
-                "files": files,
+                "criteria_items": criteria_items or [],
+                "files": files or [],
                 "knowledge_links": knowledge_links or [],
                 "knowledge_candidates": knowledge_candidates or [],
                 "analysis": analysis or {},
@@ -213,6 +215,7 @@ class AssignmentReviewStore:
             assignment = assignment_map.get(submission.get("assignment_id"), {})
             enriched["assignment_title"] = assignment.get("title", "")
             enriched["assignment_rubric_items"] = assignment.get("rubric_items", [])
+            enriched["assignment_criteria_items"] = assignment.get("criteria_items", [])
             enriched["assignment_knowledge_links"] = assignment.get("knowledge_links", [])
             enriched["assignment_course_id"] = assignment.get("course_id")
             enriched["assignment_course_name"] = assignment.get("course_name", "")
@@ -240,6 +243,7 @@ class AssignmentReviewStore:
             assignment = assignment_map.get(assignment_id, {})
             enriched["assignment_title"] = assignment.get("title", "")
             enriched["assignment_rubric_items"] = assignment.get("rubric_items", [])
+            enriched["assignment_criteria_items"] = assignment.get("criteria_items", [])
             enriched["assignment_knowledge_links"] = assignment.get("knowledge_links", [])
             enriched["assignment_course_id"] = assignment.get("course_id")
             enriched["assignment_course_name"] = assignment.get("course_name", "")
@@ -275,6 +279,7 @@ class AssignmentReviewStore:
         total_score: float,
         feedback: str,
         rubric_scores: list[dict[str, Any]] | None = None,
+        criterion_scores: list[dict[str, Any]] | None = None,
         wrongbook_items: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         with self._lock:
@@ -302,6 +307,7 @@ class AssignmentReviewStore:
                     "total_score": total_score,
                     "feedback": feedback,
                     "rubric_scores": rubric_scores or [],
+                    "criterion_scores": criterion_scores or [],
                     "reviewed_at": time.time(),
                 }
                 submission["assignment_title"] = assignment.get("title", "")
@@ -329,6 +335,25 @@ class AssignmentReviewStore:
                         "suggestion": "建议按 rubric 维度逐项复盘并补充练习。",
                     }
                 ]
+            elif not base_items and criterion_scores:
+                generated_items: list[dict[str, Any]] = []
+                for criterion in criterion_scores:
+                    score = float(criterion.get("score", 0))
+                    max_score = float(criterion.get("max_score", 0) or 0)
+                    if max_score <= 0 or score / max_score >= 0.65:
+                        continue
+                    name = criterion.get("criterion", "未命名得分点")
+                    generated_items.append(
+                        {
+                            "assignment_title": target_submission.get("assignment_title", ""),
+                            "feedback": criterion.get("reason") or f"得分点“{name}”得分较低（{score}/{max_score}）。",
+                            "error_type": "得分点未命中",
+                            "knowledge_point": criterion.get("knowledge_point") or name,
+                            "knowledge_point_id": criterion.get("knowledge_point_id"),
+                            "suggestion": criterion.get("suggestion") or f"围绕“{name}”补充针对性练习并复盘错误原因。",
+                        }
+                    )
+                base_items = generated_items
             elif not base_items and rubric_scores:
                 generated_items: list[dict[str, Any]] = []
                 for rubric in rubric_scores:

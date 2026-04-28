@@ -6,7 +6,6 @@ import {
   AlertCircle,
   AlarmClock,
   BookOpenCheck,
-  Brain,
   CheckCircle2,
   ClipboardList,
   FileText,
@@ -28,6 +27,31 @@ interface RubricItem {
   description?: string;
 }
 
+interface ScoringCriterion {
+  id?: string;
+  question_no: string;
+  criterion: string;
+  answer_hint?: string;
+  score: number;
+  keywords?: string[];
+  knowledge_point?: string;
+  knowledge_point_id?: number | null;
+}
+
+interface CriterionScore {
+  criterion_id?: string;
+  question_no: string;
+  criterion: string;
+  max_score: number;
+  score: number;
+  status: "hit" | "partial" | "missing" | string;
+  evidence?: string;
+  reason?: string;
+  suggestion?: string;
+  knowledge_point?: string;
+  knowledge_point_id?: number | null;
+}
+
 interface AssignmentItem {
   id: string;
   title: string;
@@ -40,6 +64,7 @@ interface AssignmentItem {
   status: "draft" | "published";
   confirmed: boolean;
   rubric_items: RubricItem[];
+  criteria_items?: ScoringCriterion[];
   files: Array<{ filename: string; path: string; size: number }>;
   knowledge_links?: KnowledgeLink[];
   knowledge_candidates?: KnowledgeCandidate[];
@@ -52,6 +77,7 @@ interface SubmissionItem {
   assignment_id: string;
   assignment_title?: string;
   assignment_rubric_items?: RubricItem[];
+  assignment_criteria_items?: ScoringCriterion[];
   answer_text: string;
   files: Array<{ filename: string; path: string; size: number }>;
   status: "submitted" | "reviewed";
@@ -67,11 +93,15 @@ interface SubmissionItem {
       max_score: number;
       comment?: string;
     }>;
+    criterion_scores?: CriterionScore[];
   } | null;
   auto_review?: {
     relevance_score: number;
     total_score: number;
+    max_score?: number;
     summary: string;
+    criteria_items?: ScoringCriterion[];
+    criterion_scores?: CriterionScore[];
     missing_points?: string[];
     suggestions?: string[];
     knowledge_results?: KnowledgeResult[];
@@ -100,6 +130,20 @@ interface RubricScoreDraft {
   comment: string;
 }
 
+interface CriterionScoreDraft {
+  criterion_id?: string;
+  question_no: string;
+  criterion: string;
+  max_score: number;
+  score: string;
+  status: "hit" | "partial" | "missing" | string;
+  evidence: string;
+  reason: string;
+  suggestion: string;
+  knowledge_point?: string;
+  knowledge_point_id?: number | null;
+}
+
 interface RubricDraftApiItem {
   name: string;
   description?: string;
@@ -109,6 +153,7 @@ interface RubricDraftApiItem {
 interface RubricDraftApiResponse {
   task_points: string[];
   rubric_items: RubricDraftApiItem[];
+  criteria_items?: ScoringCriterion[];
 }
 
 interface QuestionSourceRef {
@@ -194,6 +239,7 @@ interface ReviewDraft {
   totalScore: string;
   feedback: string;
   rubricScores: RubricScoreDraft[];
+  criterionScores: CriterionScoreDraft[];
   wrongbookItems: WrongbookDraftItem[];
 }
 
@@ -219,18 +265,25 @@ interface PracticeReport {
 
 type FollowupStrategy = "same" | "harder" | "easier" | "variant" | "to_choice";
 type PracticeMode = "practice" | "exam";
+type WorkspaceMode = "question" | "assignment";
 
 const FILE_HINT = "支持格式：pdf、doc、docx、txt、md、rtf、html";
 const NO_KB_SOURCE = "__none__";
-const BLOOM_OPTIONS = [
-  { value: "understand", label: "基础理解" },
-  { value: "apply", label: "应用迁移" },
-  { value: "analyze", label: "分析评价" },
+const DIFFICULTY_OPTIONS = [
+  { value: "easy", label: "简单" },
+  { value: "medium", label: "中等" },
+  { value: "hard", label: "困难" },
 ];
 const inputClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-400";
 
-function bloomLabel(value?: string) {
-  return BLOOM_OPTIONS.find((item) => item.value === value)?.label || "基础理解";
+function difficultyLabel(value?: string) {
+  return DIFFICULTY_OPTIONS.find((item) => item.value === value)?.label || "中等";
+}
+
+function difficultyToCognitiveLevel(value?: string) {
+  if (value === "hard") return "analyze";
+  if (value === "easy") return "understand";
+  return "apply";
 }
 
 function ConfigField({ label, children }: { label: string; children: React.ReactNode }) {
@@ -254,20 +307,36 @@ function formatDuration(totalSeconds: number) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function parseRubricText(raw: string): RubricItem[] {
+function parseCriteriaText(raw: string): ScoringCriterion[] {
   return raw
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
-      const [namePart, scorePart] = line.split("|").map((v) => v.trim());
+    .map((line, idx) => {
+      const [questionPart, criterionPart, scorePart, hintPart] = line.split("|").map((v) => v.trim());
       const score = Number(scorePart || "0");
       return {
-        name: namePart || "未命名维度",
+        id: `criterion_${idx + 1}`,
+        question_no: questionPart || "第1题",
+        criterion: criterionPart || questionPart || "未命名得分点",
         score: Number.isFinite(score) ? score : 0,
-        description: "",
+        answer_hint: hintPart || "",
+        keywords: [],
       };
     });
+}
+
+function formatCriteriaText(items: ScoringCriterion[] = []) {
+  return items
+    .map((item) => `${item.question_no || "第1题"}|${item.criterion || ""}|${item.score || 0}|${item.answer_hint || ""}`)
+    .join("\n");
+}
+
+function statusLabel(status?: string) {
+  if (status === "hit") return "命中";
+  if (status === "partial") return "部分命中";
+  if (status === "missing") return "未命中";
+  return status || "未判定";
 }
 
 function buildReviewDraft(sub: SubmissionItem): ReviewDraft {
@@ -297,10 +366,62 @@ function buildReviewDraft(sub: SubmissionItem): ReviewDraft {
     }
   }
 
+  const baseCriteria =
+    (sub.assignment_criteria_items && sub.assignment_criteria_items.length > 0
+      ? sub.assignment_criteria_items
+      : sub.auto_review?.criteria_items || []
+    ).map((item, idx) => ({
+      criterion_id: item.id || `criterion_${idx + 1}`,
+      question_no: item.question_no || "第1题",
+      criterion: item.criterion || "未命名得分点",
+      max_score: Number(item.score || 0),
+      score: "",
+      status: "missing",
+      evidence: "",
+      reason: "",
+      suggestion: "",
+      knowledge_point: item.knowledge_point || "",
+      knowledge_point_id: item.knowledge_point_id ?? null,
+    }));
+  const criterionScores = baseCriteria.length > 0 ? baseCriteria : rubric.map((r, idx) => ({
+    criterion_id: `rubric_${idx + 1}`,
+    question_no: "综合要求",
+    criterion: r.name,
+    max_score: r.max_score,
+    score: "",
+    status: "missing",
+    evidence: "",
+    reason: "",
+    suggestion: r.comment,
+    knowledge_point: "",
+    knowledge_point_id: null,
+  }));
+  for (const scored of sub.auto_review?.criterion_scores || []) {
+    const target = criterionScores.find((item) => item.criterion_id === scored.criterion_id || item.criterion === scored.criterion);
+    if (!target) continue;
+    target.score = String(scored.score ?? "");
+    target.status = scored.status || "missing";
+    target.evidence = scored.evidence || "";
+    target.reason = scored.reason || "";
+    target.suggestion = scored.suggestion || "";
+    target.max_score = Number(scored.max_score || target.max_score || 0);
+  }
+  for (const scored of sub.review?.criterion_scores || []) {
+    const target = criterionScores.find((item) => item.criterion_id === scored.criterion_id || item.criterion === scored.criterion);
+    if (!target) continue;
+    target.score = String(scored.score ?? "");
+    target.status = scored.status || target.status;
+    target.evidence = scored.evidence || target.evidence;
+    target.reason = scored.reason || target.reason;
+    target.suggestion = scored.suggestion || target.suggestion;
+    target.max_score = Number(scored.max_score || target.max_score || 0);
+  }
+
   return {
-    totalScore: sub.review ? String(sub.review.total_score) : "",
-    feedback: sub.review?.feedback || "",
+    totalScore: sub.review ? String(sub.review.total_score) : sub.auto_review?.total_score !== undefined ? String(sub.auto_review.total_score) : "",
+    feedback: sub.review?.feedback || sub.auto_review?.summary || "",
     rubricScores: rubric,
+    criterionScores,
     wrongbookItems: [
       {
         feedback: "",
@@ -449,6 +570,16 @@ function buildSubmissionMarkdown(sub: SubmissionItem): string {
     lines.push(`- 总分：${sub.review.total_score}`);
     lines.push(`- 评语：${sub.review.feedback || "无"}`);
     lines.push("");
+    if (sub.review.criterion_scores && sub.review.criterion_scores.length > 0) {
+      lines.push(`### 得分点明细`);
+      lines.push("");
+      sub.review.criterion_scores.forEach((item, idx) => {
+        lines.push(`${idx + 1}. ${item.question_no} ${item.criterion}：${item.score}/${item.max_score}（${statusLabel(item.status)}）`);
+        if (item.reason) lines.push(`   - 理由：${item.reason}`);
+        if (item.evidence) lines.push(`   - 证据：${item.evidence}`);
+      });
+      lines.push("");
+    }
     if (sub.review.rubric_scores && sub.review.rubric_scores.length > 0) {
       lines.push(`### Rubric 明细`);
       lines.push("");
@@ -466,6 +597,15 @@ function buildSubmissionMarkdown(sub: SubmissionItem): string {
     lines.push(`- 参考总分：${sub.auto_review.total_score}`);
     lines.push(`- 摘要：${sub.auto_review.summary}`);
     lines.push("");
+    if (sub.auto_review.criterion_scores && sub.auto_review.criterion_scores.length > 0) {
+      lines.push(`### 自动逐点批改`);
+      lines.push("");
+      sub.auto_review.criterion_scores.forEach((item, idx) => {
+        lines.push(`${idx + 1}. ${item.question_no} ${item.criterion}：${item.score}/${item.max_score}（${statusLabel(item.status)}）`);
+        if (item.reason) lines.push(`   - 理由：${item.reason}`);
+      });
+      lines.push("");
+    }
   }
 
   return lines.join("\n");
@@ -580,7 +720,7 @@ function buildQuestionSetMarkdown(results: any[]): string {
 
 function buildQuestionSetCsv(results: any[]): string {
   const rows = [
-    ["题号", "题型", "题干", "选项", "答案", "解析", "知识点", "Bloom"],
+    ["题号", "题型", "题干", "选项", "答案", "解析", "知识点", "难度"],
     ...results.map((item: any, idx: number) => {
       const q = item.question || {};
       const options = q.options
@@ -596,7 +736,7 @@ function buildQuestionSetCsv(results: any[]): string {
         String(q.correct_answer || "").replace(/\n/g, " "),
         String(q.explanation || "").replace(/\n/g, " "),
         String(q.knowledge_point || ""),
-        String(q.cognitive_level || ""),
+        "",
       ];
     }),
   ];
@@ -801,7 +941,7 @@ function evaluateObjectiveQuestion(question: any, answerRaw: string): Omit<Pract
   };
 }
 
-export default function AssignmentReviewWorkspace() {
+export default function AssignmentReviewWorkspace({ workspace = "question" }: { workspace?: WorkspaceMode }) {
   const { questionState, setQuestionState, startQuestionGen, resetQuestionGen } = useGlobal();
   const { session } = useAuth();
   const role = session?.role ?? "student";
@@ -830,7 +970,7 @@ export default function AssignmentReviewWorkspace() {
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [rubricText, setRubricText] = useState("准确性|40\n完整性|30\n表达清晰度|30");
+  const [criteriaText, setCriteriaText] = useState("");
   const [taskPoints, setTaskPoints] = useState<string[]>([]);
   const [teacherFiles, setTeacherFiles] = useState<File[]>([]);
   const [assignmentCourseOptions, setAssignmentCourseOptions] = useState<CourseOption[]>([]);
@@ -852,12 +992,20 @@ export default function AssignmentReviewWorkspace() {
   const [loading, setLoading] = useState(false);
   const [draftingRubric, setDraftingRubric] = useState(false);
 
-  const isAssignmentMode = questionState.mode === "mimic";
+  const isAssignmentMode = workspace === "assignment";
   const isConfigMode = questionState.step === "config";
   const isGenerating = questionState.step === "generating";
   const isResult = questionState.step === "result";
   const currentQuestion = questionState.results[activeIndex];
   const canStartCustom = questionState.topic.trim().length > 0;
+
+  useEffect(() => {
+    setQuestionState((prev) => {
+      const desiredMode = isAssignmentMode ? "mimic" : "knowledge";
+      if (prev.mode === desiredMode) return prev;
+      return { ...prev, mode: desiredMode, step: "config" };
+    });
+  }, [isAssignmentMode, setQuestionState]);
   const selectedQuestionCourse = useMemo(
     () => courseOptions.find((course) => course.id === selectedQuestionCourseId) || null,
     [courseOptions, selectedQuestionCourseId],
@@ -1130,7 +1278,13 @@ export default function AssignmentReviewWorkspace() {
       form.append("description", description.trim());
       if (assignmentCourseId) form.append("course_id", String(assignmentCourseId));
       if (assignmentChapterId) form.append("chapter_id", String(assignmentChapterId));
-      form.append("rubric_json", JSON.stringify(parseRubricText(rubricText)));
+      const criteria = parseCriteriaText(criteriaText);
+      form.append("criteria_json", JSON.stringify(criteria));
+      form.append("rubric_json", JSON.stringify(criteria.map((item) => ({
+        name: item.criterion,
+        score: item.score,
+        description: item.answer_hint || "",
+      }))));
       teacherFiles.forEach((f) => form.append("files", f));
 
       const res = await fetch(apiUrl("/api/v1/assignment-review/teacher/assignments"), { method: "POST", body: form });
@@ -1140,6 +1294,7 @@ export default function AssignmentReviewWorkspace() {
       setMessage("草稿创建成功，请在作业列表中勾选确认后发布。发布前学生不可见。");
       setTitle("");
       setDescription("");
+      setCriteriaText("");
       setTeacherFiles([]);
       await loadTeacherAssignments();
     } catch (e: any) {
@@ -1175,10 +1330,13 @@ export default function AssignmentReviewWorkspace() {
       }
 
       const draft = data as RubricDraftApiResponse;
-      const lines = draft.rubric_items.map((item: RubricDraftApiItem) => `${item.name}|${item.score}`);
-      setRubricText(lines.join("\n"));
+      setCriteriaText(
+        draft.criteria_items && draft.criteria_items.length > 0
+          ? formatCriteriaText(draft.criteria_items)
+          : draft.rubric_items.map((item: RubricDraftApiItem, idx) => `综合要求|${item.name}|${item.score}|${item.description || ""}`).join("\n"),
+      );
       setTaskPoints(draft.task_points || []);
-      setMessage("已生成 rubric 草稿与任务要点，你可以继续编辑后创建作业。");
+      setMessage("已生成得分点草稿与任务要点，你可以继续编辑后创建作业。");
     } catch (e: any) {
       setMessage(e.message || "生成草稿失败");
     } finally {
@@ -1299,6 +1457,21 @@ export default function AssignmentReviewWorkspace() {
         score: Number(r.score || 0),
         comment: r.comment || "",
       }));
+    const criterionScores = draft.criterionScores
+      .filter((item) => item.criterion.trim())
+      .map((item) => ({
+        criterion_id: item.criterion_id || "",
+        question_no: item.question_no || "",
+        criterion: item.criterion,
+        max_score: Number(item.max_score || 0),
+        score: Number(item.score || 0),
+        status: item.status || "missing",
+        evidence: item.evidence || "",
+        reason: item.reason || "",
+        suggestion: item.suggestion || "",
+        knowledge_point: item.knowledge_point || "",
+        knowledge_point_id: item.knowledge_point_id || null,
+      }));
 
     const wrongbookItems = draft.wrongbookItems
       .filter((w) => w.feedback.trim() || w.knowledge_point.trim() || w.error_type.trim())
@@ -1323,6 +1496,7 @@ export default function AssignmentReviewWorkspace() {
             total_score: totalScore,
             feedback: draft.feedback.trim(),
             rubric_scores: rubricScores,
+            criterion_scores: criterionScores,
             wrongbook_items: wrongbookItems,
           }),
         },
@@ -1346,7 +1520,7 @@ export default function AssignmentReviewWorkspace() {
       questionState.topic,
       questionState.difficulty,
       questionState.type,
-      questionState.bloomLevel || "understand",
+      difficultyToCognitiveLevel(questionState.difficulty),
       questionState.count,
       questionState.selectedKb,
     );
@@ -1385,7 +1559,7 @@ export default function AssignmentReviewWorkspace() {
       selectedCoursePoint.name,
       questionState.difficulty,
       questionState.type,
-      questionState.bloomLevel || "understand",
+      difficultyToCognitiveLevel(questionState.difficulty),
       questionState.count,
       kbName,
     );
@@ -1411,7 +1585,7 @@ export default function AssignmentReviewWorkspace() {
 
   const updateDraft = (id: string, updater: (current: ReviewDraft) => ReviewDraft) => {
     setReviewDrafts((prev) => {
-      const current = prev[id] || { totalScore: "", feedback: "", rubricScores: [], wrongbookItems: [] };
+      const current = prev[id] || { totalScore: "", feedback: "", rubricScores: [], criterionScores: [], wrongbookItems: [] };
       return { ...prev, [id]: updater(current) };
     });
   };
@@ -1606,7 +1780,7 @@ export default function AssignmentReviewWorkspace() {
       const topic = source.question.knowledge_point || questionState.topic;
       const baseType = String(source.question.question_type || questionState.type || "written");
       const baseDiff = String(questionState.difficulty || "medium");
-      const bloom = String(questionState.bloomLevel || "understand");
+      const bloom = difficultyToCognitiveLevel(questionState.difficulty);
 
       const nextDifficulty = (() => {
         if (strategy === "harder") {
@@ -1645,7 +1819,6 @@ export default function AssignmentReviewWorkspace() {
       questionState.topic,
       questionState.type,
       questionState.difficulty,
-      questionState.bloomLevel,
       questionState.selectedKb,
       startQuestionGen,
     ],
@@ -1656,18 +1829,15 @@ export default function AssignmentReviewWorkspace() {
       <div className="mb-5 flex items-center justify-between rounded-2xl border border-white/70 bg-white/80 p-4">
         <div className="flex items-center gap-3">
           <div className="rounded-xl bg-indigo-100 p-2 text-indigo-700">
-            <PenTool className="h-5 w-5" />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold text-slate-900">出题与作业评审中心</h1>
-            <p className="text-xs text-slate-500">阶段四：细粒度 rubric 评分 + 结构化错题</p>
+              {isAssignmentMode ? <ClipboardList className="h-5 w-5" /> : <PenTool className="h-5 w-5" />}
+            </div>
+            <div>
+            <h1 className="text-lg font-semibold text-slate-900">{isAssignmentMode ? "作业批改" : "题目生成"}</h1>
+            <p className="text-xs text-slate-500">
+              {isAssignmentMode ? "作业发布、评分标准生成与逐点批改" : "输入知识点或按课程章节生成练习题"}
+            </p>
           </div>
         </div>
-      </div>
-
-      <div className="mb-5 grid gap-3 md:grid-cols-2">
-        <button onClick={() => setQuestionState((prev) => ({ ...prev, mode: "knowledge", step: "config" }))} className={`rounded-2xl border p-4 text-left ${!isAssignmentMode ? "border-indigo-300 bg-indigo-50" : "border-slate-200 bg-white"}`}><Brain className="mb-2 h-5 w-5 text-indigo-600" /><div className="font-semibold text-slate-900">自定义出题</div><div className="text-sm text-slate-500">按知识点生成训练题</div></button>
-        <button onClick={() => setQuestionState((prev) => ({ ...prev, mode: "mimic", step: "config" }))} className={`rounded-2xl border p-4 text-left ${isAssignmentMode ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`}><ClipboardList className="mb-2 h-5 w-5 text-emerald-600" /><div className="font-semibold text-slate-900">作业评审</div><div className="text-sm text-slate-500">教师发布确认后，学生端才可见</div></button>
       </div>
 
       {!isAssignmentMode && isConfigMode && (
@@ -1679,7 +1849,7 @@ export default function AssignmentReviewWorkspace() {
                 questionSourceMode === "manual" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-600"
               }`}
             >
-              手动知识点
+              输入知识点出题
             </button>
             <button
               onClick={() => setQuestionSourceMode("course")}
@@ -1687,7 +1857,7 @@ export default function AssignmentReviewWorkspace() {
                 questionSourceMode === "course" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-600"
               }`}
             >
-              课程知识点
+              根据课程章节出题
             </button>
           </div>
 
@@ -1815,9 +1985,9 @@ export default function AssignmentReviewWorkspace() {
                 <option value="mixed">混合题</option>
               </select>
             </ConfigField>
-            <ConfigField label="Bloom 模式">
-              <select value={questionState.bloomLevel || "understand"} onChange={(e) => setQuestionState((p) => ({ ...p, bloomLevel: e.target.value }))} className={inputClass}>
-                {BLOOM_OPTIONS.map((item) => (
+            <ConfigField label="难度">
+              <select value={questionState.difficulty || "medium"} onChange={(e) => setQuestionState((p) => ({ ...p, difficulty: e.target.value }))} className={inputClass}>
+                {DIFFICULTY_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>
@@ -1863,7 +2033,7 @@ export default function AssignmentReviewWorkspace() {
             className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-white disabled:opacity-50"
           >
             <Sparkles className="h-4 w-4" />
-            {questionSourceMode === "course" ? "按课程知识点生成" : "开始生成"}
+            {questionSourceMode === "course" ? "按课程章节生成" : "开始生成"}
           </button>
         </div>
       )}
@@ -1949,7 +2119,7 @@ export default function AssignmentReviewWorkspace() {
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                 <span>
                   第 {activeIndex + 1}/{questionState.results.length} 题 · {currentQuestion.question.question_type} ·
-                  Bloom {bloomLabel(currentQuestion.question.cognitive_level)}
+                  难度 {difficultyLabel(questionState.difficulty)}
                 </span>
                 {practiceMode === "exam" && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
@@ -2178,7 +2348,7 @@ export default function AssignmentReviewWorkspace() {
         <div className="space-y-4">
           <div className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-cyan-50 p-4">
             <div className="flex items-center gap-2 text-emerald-700"><BookOpenCheck className="h-5 w-5" /><p className="font-medium">作业评审流程</p></div>
-            <p className="mt-1 text-sm text-emerald-700">支持 rubric 维度评分与结构化错题，评审后自动沉淀到学生错题本。</p>
+            <p className="mt-1 text-sm text-emerald-700">系统会先解析作业得分点，再按学生答案逐点批改并沉淀错题。</p>
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -2216,7 +2386,7 @@ export default function AssignmentReviewWorkspace() {
                 <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="h-24 w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="作业说明（可选）" />
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-indigo-700">任务要点与 rubric 草稿</p>
+                    <p className="text-sm font-medium text-indigo-700">任务要点与得分点草稿</p>
                     <button
                       onClick={generateRubricDraft}
                       disabled={draftingRubric}
@@ -2227,7 +2397,7 @@ export default function AssignmentReviewWorkspace() {
                     </button>
                   </div>
                   {taskPoints.length === 0 ? (
-                    <p className="text-xs text-indigo-600/80">点击“自动生成草稿”后，这里会展示任务要点，便于教师确认与修改。</p>
+                    <p className="text-xs text-indigo-600/80">点击“自动生成草稿”后，这里会展示作业要考查的关键要求。</p>
                   ) : (
                     <ul className="space-y-1 text-xs text-indigo-700">
                       {taskPoints.map((point, idx) => (
@@ -2236,7 +2406,7 @@ export default function AssignmentReviewWorkspace() {
                     </ul>
                   )}
                 </div>
-                <textarea value={rubricText} onChange={(e) => setRubricText(e.target.value)} className="h-28 w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="评分标准：每行填写“维度|分值”" />
+                <textarea value={criteriaText} onChange={(e) => setCriteriaText(e.target.value)} className="h-32 w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="得分点：每行填写“题号|得分点|分值|判分依据”，留空时系统会在创建草稿时自动解析" />
                 <div className="rounded-xl border border-slate-200 p-3">
                   <p className="mb-2 text-sm font-medium text-slate-700">上传作业附件</p>
                   <input type="file" multiple onChange={(e) => setTeacherFiles(Array.from(e.target.files || []))} className="w-full rounded-xl border border-slate-200 px-3 py-2" />
@@ -2249,7 +2419,7 @@ export default function AssignmentReviewWorkspace() {
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
               <h3 className="mb-3 text-base font-semibold text-slate-900">发布前检查</h3>
               <ul className="space-y-2 text-sm text-slate-600">
-                <li>1. 标题、说明、rubric 是否完整。</li>
+                <li>1. 标题、说明、得分点是否完整。</li>
                 <li>2. 发布前必须勾选确认。</li>
                 <li>3. 未发布状态学生不可见。</li>
                 <li>4. 发布后即可接收提交并评审。</li>
@@ -2293,6 +2463,22 @@ export default function AssignmentReviewWorkspace() {
                           </div>
                         </div>
                       )}
+                      {(item.criteria_items || []).length > 0 && (
+                        <div className="mt-3">
+                          <p className="font-medium text-slate-700">作业得分点</p>
+                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                            {(item.criteria_items || []).slice(0, 8).map((criterion, idx) => (
+                              <div key={`${item.id}-criterion-${criterion.id || idx}`} className="rounded-lg bg-white p-2 text-slate-700">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium text-slate-900">{criterion.question_no} · {criterion.criterion}</span>
+                                  <span>{criterion.score} 分</span>
+                                </div>
+                                {criterion.answer_hint && <p className="mt-1">{criterion.answer_hint}</p>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     {!item.confirmed && <div className="mt-3 flex flex-wrap items-center gap-3"><label className="inline-flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={!!publishChecks[item.id]} onChange={(e) => setPublishChecks((prev) => ({ ...prev, [item.id]: e.target.checked }))} />我确认该作业可以发布给学生</label><button onClick={() => publishAssignment(item.id)} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700"><CheckCircle2 className="h-4 w-4" />确认发布</button></div>}
                   </div>
@@ -2302,7 +2488,7 @@ export default function AssignmentReviewWorkspace() {
 
             <section className="rounded-2xl border border-slate-200 bg-white p-5 xl:col-span-2">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-base font-semibold text-slate-900">学生提交评审（Phase4）</h3>
+                <h3 className="text-base font-semibold text-slate-900">学生提交评审</h3>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => exportSubmissionCollection(teacherSubmissions, "teacher_submissions", "json", "教师评审总览")}
@@ -2337,6 +2523,23 @@ export default function AssignmentReviewWorkspace() {
                         <button onClick={() => exportSubmissionReport(sub, "csv")} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">导出CSV</button>
                       </div>
                       <div className="mt-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{sub.answer_text || "学生未填写文本答案（可能仅上传附件）。"}</div>
+                      {sub.auto_review?.criterion_scores && sub.auto_review.criterion_scores.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+                          <p className="text-sm font-medium text-emerald-800">系统逐点初评</p>
+                          <div className="mt-2 space-y-2">
+                            {sub.auto_review.criterion_scores.map((item, idx) => (
+                              <div key={`${sub.id}-auto-criterion-${idx}`} className="rounded-lg bg-white p-2 text-xs text-slate-700">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-medium text-slate-900">{item.question_no} · {item.criterion}</span>
+                                  <span className="text-emerald-700">{statusLabel(item.status)} · {item.score}/{item.max_score}</span>
+                                </div>
+                                {item.evidence && <p className="mt-1 text-slate-600">证据：{item.evidence}</p>}
+                                {item.reason && <p className="mt-1 text-slate-600">理由：{item.reason}</p>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       {sub.auto_review?.knowledge_results && sub.auto_review.knowledge_results.length > 0 && (
                         <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
                           <p className="text-sm font-medium text-indigo-800">知识点自动评审</p>
@@ -2354,7 +2557,31 @@ export default function AssignmentReviewWorkspace() {
                         </div>
                       )}
                       <div className="mt-3 grid gap-3 md:grid-cols-[140px_1fr]"><input value={draft.totalScore} onChange={(e) => updateDraft(sub.id, (c) => ({ ...c, totalScore: e.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2" placeholder="总分 0-100" /><textarea value={draft.feedback} onChange={(e) => updateDraft(sub.id, (c) => ({ ...c, feedback: e.target.value }))} className="h-20 rounded-xl border border-slate-200 px-3 py-2" placeholder="总体评语" /></div>
-                      <div className="mt-3 rounded-xl border border-slate-200 p-3"><p className="mb-2 text-sm font-medium text-slate-700">Rubric 维度评分</p><div className="space-y-2">{draft.rubricScores.map((r, idx) => <div key={`${sub.id}-rubric-${idx}`} className="grid gap-2 md:grid-cols-[1fr_120px_1fr]"><input value={r.name} readOnly className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" /><input value={r.score} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.rubricScores]; next[idx]={...next[idx],score:e.target.value}; return {...c,rubricScores:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder={`/${r.max_score}`} /><input value={r.comment} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.rubricScores]; next[idx]={...next[idx],comment:e.target.value}; return {...c,rubricScores:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="该维度评语" /></div>)}</div></div>
+                      <div className="mt-3 rounded-xl border border-slate-200 p-3">
+                        <p className="mb-2 text-sm font-medium text-slate-700">得分点逐项批改</p>
+                        <div className="space-y-3">
+                          {draft.criterionScores.map((item, idx) => (
+                            <div key={`${sub.id}-criterion-${idx}`} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                              <div className="grid gap-2 md:grid-cols-[110px_1fr_120px_120px]">
+                                <input value={item.question_no} readOnly className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                                <input value={item.criterion} readOnly className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                                <input value={item.score} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.criterionScores]; next[idx]={...next[idx],score:e.target.value}; return {...c,criterionScores:next}; })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder={`/${item.max_score}`} />
+                                <select value={item.status} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.criterionScores]; next[idx]={...next[idx],status:e.target.value}; return {...c,criterionScores:next}; })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                                  <option value="hit">命中</option>
+                                  <option value="partial">部分命中</option>
+                                  <option value="missing">未命中</option>
+                                </select>
+                              </div>
+                              <div className="mt-2 grid gap-2 md:grid-cols-3">
+                                <textarea value={item.evidence} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.criterionScores]; next[idx]={...next[idx],evidence:e.target.value}; return {...c,criterionScores:next}; })} className="h-20 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="学生答案证据" />
+                                <textarea value={item.reason} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.criterionScores]; next[idx]={...next[idx],reason:e.target.value}; return {...c,criterionScores:next}; })} className="h-20 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="判分理由" />
+                                <textarea value={item.suggestion} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.criterionScores]; next[idx]={...next[idx],suggestion:e.target.value}; return {...c,criterionScores:next}; })} className="h-20 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="改进建议" />
+                              </div>
+                            </div>
+                          ))}
+                          {draft.criterionScores.length === 0 && <p className="text-sm text-slate-500">暂无得分点，建议重新生成作业得分点后再评审。</p>}
+                        </div>
+                      </div>
                       <div className="mt-3 rounded-xl border border-slate-200 p-3"><div className="mb-2 flex items-center justify-between"><p className="text-sm font-medium text-slate-700">结构化错题项（可选）</p><button onClick={() => updateDraft(sub.id, (c) => ({ ...c, wrongbookItems: [...c.wrongbookItems, { feedback: "", error_type: "", knowledge_point: "", suggestion: "" }] }))} className="text-xs text-indigo-600 hover:text-indigo-700">+ 新增错题项</button></div><div className="space-y-2">{draft.wrongbookItems.map((w, idx) => <div key={`${sub.id}-wrong-${idx}`} className="rounded-lg border border-slate-200 p-2"><div className="grid gap-2 md:grid-cols-2"><input value={w.error_type} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.wrongbookItems]; next[idx]={...next[idx],error_type:e.target.value}; return {...c,wrongbookItems:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="错误类型" /><input value={w.knowledge_point} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.wrongbookItems]; next[idx]={...next[idx],knowledge_point:e.target.value}; return {...c,wrongbookItems:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="知识点" /><input value={w.feedback} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.wrongbookItems]; next[idx]={...next[idx],feedback:e.target.value}; return {...c,wrongbookItems:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-2" placeholder="问题反馈" /><input value={w.suggestion} onChange={(e) => updateDraft(sub.id, (c) => { const next=[...c.wrongbookItems]; next[idx]={...next[idx],suggestion:e.target.value}; return {...c,wrongbookItems:next}; })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-2" placeholder="改进建议" /></div></div>)}</div></div>
                       <div className="mt-3 flex justify-end"><button onClick={() => submitReview(sub.id)} disabled={loading} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">提交评审</button></div>
                     </div>
@@ -2469,6 +2696,23 @@ export default function AssignmentReviewWorkspace() {
                           相关性：{sub.auto_review.relevance_score} 分 · 参考总分：{sub.auto_review.total_score}
                         </p>
                         <p className="mt-1 text-indigo-800">{sub.auto_review.summary}</p>
+                        {sub.auto_review.criterion_scores && sub.auto_review.criterion_scores.length > 0 && (
+                          <div className="mt-3">
+                            <p className="font-medium text-indigo-900">得分点明细</p>
+                            <div className="mt-2 space-y-2">
+                              {sub.auto_review.criterion_scores.map((item, idx) => (
+                                <div key={`${sub.id}-student-criterion-${idx}`} className="rounded-lg bg-white/80 p-2 text-xs text-indigo-900">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="font-medium">{item.question_no} · {item.criterion}</span>
+                                    <span>{statusLabel(item.status)} · {item.score}/{item.max_score}</span>
+                                  </div>
+                                  {item.reason && <p className="mt-1">{item.reason}</p>}
+                                  {item.suggestion && <p className="mt-1">建议：{item.suggestion}</p>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {sub.auto_review.knowledge_results && sub.auto_review.knowledge_results.length > 0 && (
                           <div className="mt-3">
                             <p className="font-medium text-indigo-900">知识点表现</p>

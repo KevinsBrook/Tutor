@@ -5,6 +5,7 @@ import {
   Book,
   BookOpen,
   CircleOff,
+  ClipboardList,
   GraduationCap,
   History,
   MessageCircle,
@@ -18,42 +19,49 @@ import { useAuth } from "@/context/AuthContext";
 const moduleCards = [
   {
     title: "智能问答",
-    description: "进入独立问答页，围绕课程资料、练习和学习记录进行对话式学习。",
+    description: "围绕课程资料、练习记录和学习问题进行对话式学习。",
     href: "/chat",
     icon: MessageCircle,
     tone: "bg-sky-50 text-sky-700 border-sky-100",
   },
   {
     title: "课程中心",
-    description: "按课程组织章节、教师资料、学生笔记和知识点，是本次教学平台优化的核心入口。",
+    description: "管理课程、章节、教学资料、学生笔记和知识点。",
     href: "/knowledge",
     icon: BookOpen,
     tone: "bg-emerald-50 text-emerald-700 border-emerald-100",
   },
   {
     title: "题目生成",
-    description: "面向课程知识点生成练习题，后续会与章节、作业和错题本进一步打通。",
+    description: "按知识点、题型、难度和资料来源自定义生成练习题。",
     href: "/question",
     icon: PenTool,
     tone: "bg-indigo-50 text-indigo-700 border-indigo-100",
   },
   {
+    title: "作业批改",
+    description: "教师发布作业，系统生成评分标准并对学生答案逐点批改。",
+    href: "/assignment-review",
+    icon: ClipboardList,
+    tone: "bg-emerald-50 text-emerald-700 border-emerald-100",
+  },
+  {
     title: "错题本",
-    description: "沉淀学生练习和作业中的薄弱点，为后续知识点掌握记录提供依据。",
+    description: "沉淀练习和作业中的薄弱点，支持后续复盘与再练。",
     href: "/wrongbook",
     icon: CircleOff,
     tone: "bg-rose-50 text-rose-700 border-rose-100",
   },
   {
     title: "学习笔记",
-    description: "保留原有笔记入口；课程相关笔记建议在课程中心的对应章节下上传。",
+    description: "整理个人笔记和学习记录。",
     href: "/notebook",
     icon: Book,
     tone: "bg-amber-50 text-amber-700 border-amber-100",
   },
   {
     title: "历史记录",
-    description: "查看历史学习与问答记录，便于回溯学习过程。",
+    description: "查看历史学习、问答和生成记录。",
     href: "/history",
     icon: History,
     tone: "bg-slate-50 text-slate-700 border-slate-200",
@@ -77,8 +85,7 @@ export default function HomePage() {
                 面向课程教学的智能学习平台
               </h1>
               <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600 md:text-base">
-                教师可以建设课程、章节和资料，学生可以围绕课程学习、练习和整理错题。
-                后续模块会逐步围绕课程中心打通，让知识库、出题、作业审查和错题本真正连成一条学习链路。
+                教师可以建设课程、维护知识点并批改作业；学生可以围绕课程资料练习、提交作业和整理错题。
               </p>
             </div>
             <Link
@@ -119,7 +126,7 @@ export default function HomePage() {
             <div>
               <h2 className="text-lg font-semibold text-slate-950">平台设置</h2>
               <p className="mt-1 text-sm text-slate-600">
-                调整接口地址、界面偏好和侧边栏顺序。
+                调整接口地址、界面偏好和导航顺序。
               </p>
             </div>
             <Link

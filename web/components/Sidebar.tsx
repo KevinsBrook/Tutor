@@ -9,6 +9,7 @@ import {
   BookOpen,
   Calculator,
   CircleOff,
+  ClipboardList,
   Edit3,
   GraduationCap,
   History,
@@ -42,6 +43,7 @@ const ALL_NAV_ITEMS: Record<string, { icon: LucideIcon; name: string }> = {
   "/knowledge": { icon: BookOpen, name: "课程中心" },
   "/notebook": { icon: Book, name: "学习笔记" },
   "/question": { icon: PenTool, name: "题目生成" },
+  "/assignment-review": { icon: ClipboardList, name: "作业批改" },
   "/mastery": { icon: BarChart3, name: "知识点掌握" },
   "/solver": { icon: Calculator, name: "智能求解" },
   "/guide": { icon: GraduationCap, name: "引导学习" },
@@ -127,9 +129,18 @@ export default function Sidebar() {
       sidebarNavOrder.learnResearch.filter((href) => href !== "/student" && href !== "/teacher"),
     );
 
-    if (!learnResearch.find((item) => item.href === "/mastery")) {
+    if (!learnResearch.find((item) => item.href === "/assignment-review")) {
       const questionIndex = learnResearch.findIndex((item) => item.href === "/question");
       learnResearch.splice(questionIndex >= 0 ? questionIndex + 1 : 0, 0, {
+        name: ALL_NAV_ITEMS["/assignment-review"].name,
+        href: "/assignment-review",
+        icon: ALL_NAV_ITEMS["/assignment-review"].icon,
+      });
+    }
+
+    if (!learnResearch.find((item) => item.href === "/mastery")) {
+      const assignmentIndex = learnResearch.findIndex((item) => item.href === "/assignment-review");
+      learnResearch.splice(assignmentIndex >= 0 ? assignmentIndex + 1 : 0, 0, {
         name: ALL_NAV_ITEMS["/mastery"].name,
         href: "/mastery",
         icon: ALL_NAV_ITEMS["/mastery"].icon,
@@ -174,7 +185,7 @@ export default function Sidebar() {
 
         <div className="hidden items-center gap-2 md:flex">
           <div className="rounded-xl border border-slate-200 bg-white/65 px-3 py-2 text-xs text-slate-700">
-            {userRoleLabel}：{session?.username}
+            {userRoleLabel}: {session?.username}
           </div>
           <Link
             href="/settings"

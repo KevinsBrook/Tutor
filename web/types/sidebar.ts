@@ -28,6 +28,7 @@ export const DEFAULT_NAV_ORDER: SidebarNavOrder = {
   start: ["/", "/chat", "/history", "/knowledge", "/notebook"],
   learnResearch: [
     "/question",
+    "/assignment-review",
     "/mastery",
     "/solver",
     "/guide",

@@ -1,4 +1,5 @@
-﻿import AssignmentReviewWorkspace from "./AssignmentReviewWorkspace";
+import AssignmentReviewWorkspace from "./AssignmentReviewWorkspace";
 
-export default AssignmentReviewWorkspace;
-
+export default function QuestionPage() {
+  return <AssignmentReviewWorkspace workspace="question" />;
+}

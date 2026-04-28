@@ -25,6 +25,7 @@ from src.api.utils.assignment_review_store import get_assignment_review_store
 from src.core.database import get_db
 from src.core.models import Course, CourseChapter, KnowledgePoint, Student, Teacher, User
 from src.services.mastery import apply_mastery_event
+from src.utils.json_parser import parse_json_response
 from src.utils.document_validator import DocumentValidator
 
 router = APIRouter()
@@ -47,6 +48,17 @@ class RubricItem(BaseModel):
     score: float = 0
 
 
+class ScoringCriterion(BaseModel):
+    id: str = ""
+    question_no: str = "第1题"
+    criterion: str
+    answer_hint: str = ""
+    score: float = 0
+    keywords: list[str] = Field(default_factory=list)
+    knowledge_point: str = ""
+    knowledge_point_id: int | None = None
+
+
 class ConfirmPublishRequest(BaseModel):
     teacher_username: str
 
@@ -56,6 +68,20 @@ class ReviewRubricScore(BaseModel):
     score: float
     max_score: float = 0
     comment: str = ""
+
+
+class ReviewCriterionScore(BaseModel):
+    criterion_id: str = ""
+    question_no: str = ""
+    criterion: str
+    max_score: float = 0
+    score: float = 0
+    status: str = "missing"
+    evidence: str = ""
+    reason: str = ""
+    suggestion: str = ""
+    knowledge_point: str = ""
+    knowledge_point_id: int | None = None
 
 
 class ReviewWrongbookItem(BaseModel):
@@ -72,6 +98,7 @@ class ReviewSubmissionRequest(BaseModel):
     total_score: float
     feedback: str = ""
     rubric_scores: list[ReviewRubricScore] = Field(default_factory=list)
+    criterion_scores: list[ReviewCriterionScore] = Field(default_factory=list)
     wrongbook_items: list[ReviewWrongbookItem] = Field(default_factory=list)
 
 
@@ -87,6 +114,7 @@ class RubricDraftRequest(BaseModel):
 class RubricDraftResponse(BaseModel):
     task_points: list[str]
     rubric_items: list[RubricItem]
+    criteria_items: list[ScoringCriterion] = Field(default_factory=list)
 
 
 class WrongbookPracticeRequest(BaseModel):
@@ -440,6 +468,263 @@ def _build_rubric_items(
     return items
 
 
+def _criterion_id(index: int) -> str:
+    return f"criterion_{index + 1:02d}"
+
+
+def _split_sentences(text: str, limit: int = 40) -> list[str]:
+    parts = re.split(r"[\n。；;！？!?]", text or "")
+    items: list[str] = []
+    for part in parts:
+        value = part.strip(" \t\r\n-•、，,.：:")
+        if len(value) < 4:
+            continue
+        if value in items:
+            continue
+        items.append(value)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _extract_question_blocks(title: str, description: str, files: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    raw_text = _assignment_text(title, description, files or [])
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    blocks: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    question_pattern = re.compile(r"^(第?\s*[一二三四五六七八九十\d]+\s*[题、.．)]|\d+\s*[、.．)])\s*(.*)")
+    score_pattern = re.compile(r"(\d+(?:\.\d+)?)\s*分")
+
+    for line in lines:
+        match = question_pattern.match(line)
+        if match:
+            if current:
+                blocks.append(current)
+            question_no = re.sub(r"\s+", "", match.group(1).strip("、.．) "))
+            current = {"question_no": question_no or f"第{len(blocks) + 1}题", "text": match.group(2).strip() or line}
+            continue
+        if current:
+            current["text"] = f"{current.get('text', '')}\n{line}".strip()
+
+    if current:
+        blocks.append(current)
+    if not blocks and raw_text.strip():
+        blocks = [{"question_no": "第1题", "text": raw_text.strip()}]
+
+    for block in blocks:
+        score_match = score_pattern.search(str(block.get("text", "")))
+        block["score"] = float(score_match.group(1)) if score_match else 0.0
+    return blocks[:20]
+
+
+def _coerce_criteria_items(items: Any, total_score: float = 100) -> list[ScoringCriterion]:
+    if not isinstance(items, list):
+        return []
+    criteria: list[ScoringCriterion] = []
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        criterion = str(item.get("criterion") or item.get("name") or item.get("title") or "").strip()
+        if not criterion:
+            continue
+        keywords = item.get("keywords") if isinstance(item.get("keywords"), list) else []
+        criteria.append(
+            ScoringCriterion(
+                id=str(item.get("id") or _criterion_id(idx)),
+                question_no=str(item.get("question_no") or item.get("question") or "第1题"),
+                criterion=criterion[:160],
+                answer_hint=str(item.get("answer_hint") or item.get("description") or "").strip()[:240],
+                score=float(item.get("score") or item.get("max_score") or 0),
+                keywords=[str(word).strip() for word in keywords if str(word).strip()][:8],
+                knowledge_point=str(item.get("knowledge_point") or "").strip(),
+                knowledge_point_id=item.get("knowledge_point_id"),
+            )
+        )
+    if not criteria:
+        return []
+    assigned = sum(max(0.0, item.score) for item in criteria)
+    if assigned <= 0:
+        total = total_score if total_score > 0 else 100
+        base = round(total / len(criteria), 2)
+        for idx, item in enumerate(criteria):
+            item.score = base
+            if idx == len(criteria) - 1:
+                item.score = round(total - sum(x.score for x in criteria[:-1]), 2)
+    return criteria
+
+
+def _fallback_scoring_criteria(
+    *,
+    title: str,
+    description: str,
+    files: list[dict[str, Any]] | None = None,
+    task_points: list[str] | None = None,
+    knowledge_links: list[dict[str, Any]] | None = None,
+    expected_total_score: float = 100,
+) -> list[ScoringCriterion]:
+    blocks = _extract_question_blocks(title, description, files)
+    total = expected_total_score if expected_total_score > 0 else 100
+    criteria: list[ScoringCriterion] = []
+
+    if blocks:
+        block_score_total = sum(float(block.get("score") or 0) for block in blocks)
+        for block_idx, block in enumerate(blocks):
+            question_no = str(block.get("question_no") or f"第{block_idx + 1}题")
+            question_score = float(block.get("score") or 0) or round(total / len(blocks), 2)
+            sentences = _split_sentences(str(block.get("text", "")), limit=4)
+            if not sentences:
+                sentences = [str(block.get("text", "") or title or "完成题目要求")]
+            selected = sentences[: min(4, max(2, len(sentences)))]
+            base = round(question_score / len(selected), 2)
+            for local_idx, sentence in enumerate(selected):
+                score = base
+                if local_idx == len(selected) - 1:
+                    score = round(question_score - base * (len(selected) - 1), 2)
+                criteria.append(
+                    ScoringCriterion(
+                        id=_criterion_id(len(criteria)),
+                        question_no=question_no,
+                        criterion=sentence[:120],
+                        answer_hint=f"答案需要明确回应：{sentence[:120]}",
+                        score=score,
+                        keywords=list(_normalize_keywords(sentence))[:6],
+                    )
+                )
+        if block_score_total > 0 and abs(block_score_total - total) > 1 and criteria:
+            ratio = total / block_score_total
+            for item in criteria:
+                item.score = round(item.score * ratio, 2)
+
+    for point in (task_points or [])[:8]:
+        if any(_keyword_overlap_score(str(point), item.criterion) >= 0.8 for item in criteria):
+            continue
+        criteria.append(
+            ScoringCriterion(
+                id=_criterion_id(len(criteria)),
+                question_no="综合要求",
+                criterion=str(point)[:120],
+                answer_hint=f"答案需要覆盖该任务要点：{str(point)[:120]}",
+                score=0,
+                keywords=list(_normalize_keywords(str(point)))[:6],
+            )
+        )
+
+    if not criteria:
+        defaults = [
+            ("回应题目核心要求", "答案应直接回应作业问题，不能只写泛泛而谈的内容。"),
+            ("给出关键过程或依据", "答案应展示必要的步骤、论证、数据、公式或引用依据。"),
+            ("形成明确结论", "答案应给出清晰结论，并能和前面的过程对应。"),
+        ]
+        for name, hint in defaults:
+            criteria.append(
+                ScoringCriterion(
+                    id=_criterion_id(len(criteria)),
+                    question_no="第1题",
+                    criterion=name,
+                    answer_hint=hint,
+                    score=0,
+                    keywords=list(_normalize_keywords(name + hint))[:6],
+                )
+            )
+
+    for criterion, link in zip(criteria, knowledge_links or []):
+        criterion.knowledge_point = str(link.get("knowledge_point") or "")
+        criterion.knowledge_point_id = link.get("knowledge_point_id")
+        if criterion.knowledge_point and criterion.knowledge_point not in criterion.keywords:
+            criterion.keywords.append(criterion.knowledge_point)
+
+    assigned = sum(max(0.0, item.score) for item in criteria)
+    if assigned <= 0:
+        base = round(total / len(criteria), 2)
+        for idx, item in enumerate(criteria):
+            item.score = base
+            if idx == len(criteria) - 1:
+                item.score = round(total - sum(x.score for x in criteria[:-1]), 2)
+    else:
+        diff = round(total - assigned, 2)
+        if abs(diff) > 0.01:
+            criteria[-1].score = round(criteria[-1].score + diff, 2)
+    return criteria[:30]
+
+
+async def _llm_generate_scoring_criteria(
+    *,
+    title: str,
+    description: str,
+    files: list[dict[str, Any]] | None = None,
+    task_points: list[str] | None = None,
+    knowledge_links: list[dict[str, Any]] | None = None,
+    expected_total_score: float = 100,
+) -> list[ScoringCriterion]:
+    try:
+        from src.services.llm import complete
+    except Exception:
+        return []
+
+    prompt = {
+        "title": title,
+        "description": description,
+        "assignment_text": _assignment_text(title, description, files or [])[:6000],
+        "task_points": task_points or [],
+        "knowledge_links": knowledge_links or [],
+        "expected_total_score": expected_total_score,
+        "instruction": (
+            "请像教师拆解试卷一样，输出 JSON。criteria_items 是得分点数组。"
+            "每个得分点必须包含 id, question_no, criterion, answer_hint, score, keywords。"
+            "criterion 写具体可判定的得分点，不要写笼统的准确性/完整性/表达清晰度。"
+        ),
+    }
+    try:
+        response = await complete(
+            json.dumps(prompt, ensure_ascii=False),
+            system_prompt="你是严谨的中文助教，只输出可解析 JSON。",
+            temperature=0.2,
+            max_tokens=2200,
+            max_retries=1,
+        )
+        parsed = parse_json_response(response, fallback={})
+        raw_items = parsed.get("criteria_items") if isinstance(parsed, dict) else parsed
+        return _coerce_criteria_items(raw_items, expected_total_score)
+    except Exception:
+        return []
+
+
+async def _build_scoring_criteria(
+    *,
+    title: str,
+    description: str,
+    files: list[dict[str, Any]] | None = None,
+    task_points: list[str] | None = None,
+    knowledge_links: list[dict[str, Any]] | None = None,
+    expected_total_score: float = 100,
+) -> list[ScoringCriterion]:
+    criteria = await _llm_generate_scoring_criteria(
+        title=title,
+        description=description,
+        files=files,
+        task_points=task_points,
+        knowledge_links=knowledge_links,
+        expected_total_score=expected_total_score,
+    )
+    if criteria:
+        return criteria
+    return _fallback_scoring_criteria(
+        title=title,
+        description=description,
+        files=files,
+        task_points=task_points,
+        knowledge_links=knowledge_links,
+        expected_total_score=expected_total_score,
+    )
+
+
+def _criteria_to_rubric(criteria: list[ScoringCriterion]) -> list[RubricItem]:
+    return [
+        RubricItem(name=item.criterion, description=item.answer_hint, score=item.score)
+        for item in criteria
+    ]
+
+
 def _normalize_keywords(text: str) -> set[str]:
     if not text:
         return set()
@@ -450,7 +735,7 @@ def _normalize_keywords(text: str) -> set[str]:
     return {w for w in words if w not in stop_words}
 
 
-def _build_auto_review(
+def _build_auto_review_legacy_unused(
     assignment: dict[str, Any],
     answer_text: str,
     files: list[dict[str, Any]],
@@ -590,6 +875,265 @@ def _build_auto_review(
     }
 
 
+def _answer_evidence(answer_text: str, keywords: list[str]) -> str:
+    sentences = _split_sentences(answer_text, limit=80)
+    if not sentences:
+        return ""
+    best_sentence = ""
+    best_score = 0
+    normalized_keywords = [word.lower() for word in keywords if word]
+    for sentence in sentences:
+        lower = sentence.lower()
+        score = sum(1 for word in normalized_keywords if word and word in lower)
+        if score > best_score:
+            best_sentence = sentence
+            best_score = score
+    if best_sentence:
+        return best_sentence[:240]
+    return sentences[0][:180] if len(answer_text.strip()) >= 40 else ""
+
+
+def _score_criteria_by_rules(
+    criteria: list[ScoringCriterion],
+    full_answer_text: str,
+) -> list[dict[str, Any]]:
+    answer_keywords = _normalize_keywords(full_answer_text)
+    rows: list[dict[str, Any]] = []
+    for item in criteria:
+        keywords = list(dict.fromkeys(item.keywords + list(_normalize_keywords(item.criterion + item.answer_hint))))
+        criterion_keywords = {word for word in keywords if word}
+        overlap = len(answer_keywords & criterion_keywords)
+        ratio = overlap / max(1, min(len(answer_keywords), len(criterion_keywords)))
+        evidence = _answer_evidence(full_answer_text, keywords)
+        if item.criterion and item.criterion in full_answer_text:
+            ratio = max(ratio, 0.9)
+        if evidence and ratio < 0.25:
+            ratio = 0.25
+
+        if ratio >= 0.65:
+            status = "hit"
+            score = item.score
+            reason = "答案命中了该得分点，并能找到对应表述。"
+            suggestion = ""
+        elif ratio >= 0.28:
+            status = "partial"
+            score = round(item.score * 0.55, 1)
+            reason = "答案部分涉及该得分点，但说明不够完整或证据不足。"
+            suggestion = "补充关键步骤、依据或结论，使该得分点表达完整。"
+        else:
+            status = "missing"
+            score = 0.0
+            reason = "未在答案中找到足够证据支撑该得分点。"
+            suggestion = f"围绕“{item.criterion}”补充作答。"
+
+        if len(full_answer_text.strip()) < 80 and status != "missing":
+            score = round(score * 0.8, 1)
+            reason = f"{reason} 但答案整体偏短，解释充分性不足。"
+            suggestion = suggestion or "答案较短，建议补充必要解释和推理过程。"
+
+        rows.append(
+            {
+                "criterion_id": item.id,
+                "question_no": item.question_no,
+                "criterion": item.criterion,
+                "max_score": item.score,
+                "score": round(max(0.0, min(item.score, score)), 1),
+                "status": status,
+                "evidence": evidence,
+                "reason": reason,
+                "suggestion": suggestion,
+                "knowledge_point": item.knowledge_point,
+                "knowledge_point_id": item.knowledge_point_id,
+            }
+        )
+    return rows
+
+
+async def _llm_score_submission(
+    criteria: list[ScoringCriterion],
+    assignment: dict[str, Any],
+    full_answer_text: str,
+) -> list[dict[str, Any]]:
+    if not full_answer_text.strip():
+        return []
+    try:
+        from src.services.llm import complete
+    except Exception:
+        return []
+
+    prompt = {
+        "assignment_title": assignment.get("title", ""),
+        "assignment_description": assignment.get("description", ""),
+        "criteria_items": [item.model_dump() for item in criteria],
+        "student_answer": full_answer_text[:8000],
+        "instruction": (
+            "请像教师批改试卷一样逐个得分点评分，只输出 JSON。"
+            "criterion_scores 数组中每项包含 criterion_id, question_no, criterion, max_score, score, status, evidence, reason, suggestion。"
+            "status 只能是 hit/partial/missing。evidence 必须引用学生答案里的原文；找不到证据时置空并判 missing。"
+        ),
+    }
+    try:
+        response = await complete(
+            json.dumps(prompt, ensure_ascii=False),
+            system_prompt="你是严谨的中文作业批改助教，只输出可解析 JSON。",
+            temperature=0.1,
+            max_tokens=3500,
+            max_retries=1,
+        )
+        parsed = parse_json_response(response, fallback={})
+        raw_rows = parsed.get("criterion_scores") if isinstance(parsed, dict) else parsed
+        if not isinstance(raw_rows, list):
+            return []
+        criteria_map = {item.id: item for item in criteria}
+        rows: list[dict[str, Any]] = []
+        for raw in raw_rows:
+            if not isinstance(raw, dict):
+                continue
+            criterion_id = str(raw.get("criterion_id") or "")
+            item = criteria_map.get(criterion_id)
+            if not item:
+                item = criteria[len(rows)] if len(rows) < len(criteria) else None
+            if not item:
+                continue
+            max_score = float(raw.get("max_score") or item.score or 0)
+            score = max(0.0, min(max_score, float(raw.get("score") or 0)))
+            evidence = str(raw.get("evidence") or "").strip()
+            if evidence and evidence not in full_answer_text:
+                evidence = _answer_evidence(full_answer_text, item.keywords)
+            rows.append(
+                {
+                    "criterion_id": item.id,
+                    "question_no": str(raw.get("question_no") or item.question_no),
+                    "criterion": str(raw.get("criterion") or item.criterion),
+                    "max_score": max_score,
+                    "score": round(score, 1),
+                    "status": str(raw.get("status") or "missing"),
+                    "evidence": evidence[:240],
+                    "reason": str(raw.get("reason") or "")[:300],
+                    "suggestion": str(raw.get("suggestion") or "")[:300],
+                    "knowledge_point": item.knowledge_point,
+                    "knowledge_point_id": item.knowledge_point_id,
+                }
+            )
+        return rows if len(rows) >= min(1, len(criteria)) else []
+    except Exception:
+        return []
+
+
+async def _build_auto_review(
+    assignment: dict[str, Any],
+    answer_text: str,
+    files: list[dict[str, Any]],
+) -> dict[str, Any]:
+    submitted_file_text = "\n".join(
+        text for text in (_extract_text_from_file(file.get("path", "")) for file in files) if text
+    )
+    full_answer_text = "\n".join([answer_text or "", submitted_file_text]).strip()
+    raw_criteria = assignment.get("criteria_items") or []
+    criteria = _coerce_criteria_items(raw_criteria, 100)
+    if not criteria:
+        criteria = _fallback_scoring_criteria(
+            title=assignment.get("title", ""),
+            description=assignment.get("description", ""),
+            files=assignment.get("files", []),
+            task_points=(assignment.get("analysis", {}) or {}).get("task_points", []),
+            knowledge_links=assignment.get("knowledge_links", []) or [],
+            expected_total_score=100,
+        )
+
+    criterion_scores = await _llm_score_submission(criteria, assignment, full_answer_text)
+    if not criterion_scores:
+        criterion_scores = _score_criteria_by_rules(criteria, full_answer_text)
+
+    total_score = round(sum(float(item.get("score", 0) or 0) for item in criterion_scores), 1)
+    max_total = round(sum(float(item.get("max_score", 0) or 0) for item in criterion_scores), 1) or 100
+    relevance_score = round(total_score / max_total * 100, 1) if max_total else 0.0
+
+    missing_points = [
+        item["criterion"]
+        for item in criterion_scores
+        if item.get("status") == "missing"
+    ][:6]
+    suggestions = [
+        item["suggestion"]
+        for item in criterion_scores
+        if item.get("suggestion")
+    ][:6]
+    if not suggestions and total_score >= max_total * 0.8:
+        suggestions.append("整体命中主要得分点，可继续优化表达的精炼度和论证深度。")
+
+    errors = [
+        {
+            "type": "得分点缺失" if item.get("status") == "missing" else "得分点不完整",
+            "dimension": item.get("criterion", ""),
+            "detail": item.get("reason", ""),
+        }
+        for item in criterion_scores
+        if item.get("status") in {"missing", "partial"}
+    ]
+
+    knowledge_results: list[dict[str, Any]] = []
+    for link in assignment.get("knowledge_links", []) or []:
+        kp_name = str(link.get("knowledge_point", "")).strip()
+        if not kp_name:
+            continue
+        related = [
+            item for item in criterion_scores
+            if item.get("knowledge_point_id") == link.get("knowledge_point_id")
+            or kp_name in str(item.get("criterion", ""))
+        ]
+        if related:
+            ratio = sum(float(item.get("score", 0) or 0) for item in related) / max(
+                1.0,
+                sum(float(item.get("max_score", 0) or 0) for item in related),
+            )
+        else:
+            ratio = _keyword_overlap_score(full_answer_text, kp_name)
+        if ratio >= 0.65:
+            status = "correct"
+            feedback = "该知识点相关得分点体现较充分。"
+        elif ratio >= 0.35:
+            status = "partial"
+            feedback = "该知识点有部分体现，但仍需补充关键过程或解释。"
+        else:
+            status = "incorrect"
+            feedback = "该知识点相关得分点体现不足，建议加入错题本复盘。"
+        knowledge_results.append(
+            {
+                "knowledge_point_id": link.get("knowledge_point_id"),
+                "knowledge_point": kp_name,
+                "chapter_title": link.get("chapter_title", ""),
+                "score_ratio": round(max(0.0, min(1.0, ratio)), 3),
+                "status": status,
+                "feedback": feedback,
+            }
+        )
+
+    summary = f"按 {len(criterion_scores)} 个得分点完成自动批改，参考得分 {total_score}/{max_total}。"
+    return {
+        "generated_at": time.time(),
+        "relevance_score": relevance_score,
+        "total_score": total_score,
+        "max_score": max_total,
+        "criteria_items": [item.model_dump() for item in criteria],
+        "criterion_scores": criterion_scores,
+        "rubric_scores": [
+            {
+                "name": item.get("criterion", ""),
+                "score": item.get("score", 0),
+                "max_score": item.get("max_score", 0),
+                "comment": item.get("reason", ""),
+            }
+            for item in criterion_scores
+        ],
+        "knowledge_results": knowledge_results,
+        "errors": errors,
+        "missing_points": missing_points,
+        "suggestions": suggestions,
+        "summary": summary,
+    }
+
+
 def _build_practice(strategy: str, wrong_item: dict[str, Any]) -> dict[str, Any]:
     kp = wrong_item.get("knowledge_point") or "相关知识点"
     feedback = wrong_item.get("feedback") or "本题存在薄弱点"
@@ -659,8 +1203,16 @@ async def generate_rubric_draft(request: RubricDraftRequest, db: Session = Depen
         ]
 
     raw_text = "\n".join([request.title, request.description, " ".join(request.file_names)])
-    rubric_items = _build_rubric_items(task_points, raw_text, request.expected_total_score)
-    return RubricDraftResponse(task_points=task_points, rubric_items=rubric_items)
+    criteria_items = await _build_scoring_criteria(
+        title=request.title,
+        description=request.description,
+        files=[{"filename": name} for name in request.file_names],
+        task_points=task_points,
+        knowledge_links=[],
+        expected_total_score=request.expected_total_score,
+    )
+    rubric_items = _criteria_to_rubric(criteria_items) or _build_rubric_items(task_points, raw_text, request.expected_total_score)
+    return RubricDraftResponse(task_points=task_points, rubric_items=rubric_items, criteria_items=criteria_items)
 
 
 @router.get("/teacher/assignments")
@@ -678,6 +1230,7 @@ async def create_assignment(
     course_id: int | None = Form(None),
     chapter_id: int | None = Form(None),
     rubric_json: str = Form("[]"),
+    criteria_json: str = Form("[]"),
     files: list[UploadFile] = File(default_factory=list),
     db: Session = Depends(get_db),
 ):
@@ -705,6 +1258,16 @@ async def create_assignment(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid rubric_json: {exc}") from exc
 
+    try:
+        parsed_criteria = json.loads(criteria_json or "[]")
+        if isinstance(parsed_criteria, dict):
+            parsed_criteria = [parsed_criteria]
+        if not isinstance(parsed_criteria, list):
+            raise ValueError("criteria_json must be a JSON array")
+        criteria_items = _coerce_criteria_items(parsed_criteria, 100)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid criteria_json: {exc}") from exc
+
     upload_folder = (
         store.paths.uploads_root / "teacher" / teacher_username / assignment_id / "assignment_files"
     )
@@ -717,12 +1280,24 @@ async def create_assignment(
         description=description,
         files=stored_files,
     )
+    if not criteria_items:
+        criteria_items = await _build_scoring_criteria(
+            title=title,
+            description=description,
+            files=stored_files,
+            task_points=analysis.get("task_points", []),
+            knowledge_links=analysis.get("knowledge_links", []),
+            expected_total_score=100,
+        )
+    if not rubric_items and criteria_items:
+        rubric_items = _criteria_to_rubric(criteria_items)
 
     assignment = store.create_assignment(
         teacher_username=teacher_username,
         title=title,
         description=description,
         rubric_items=[item.model_dump() for item in rubric_items],
+        criteria_items=[item.model_dump() for item in criteria_items],
         files=stored_files,
         assignment_id=assignment_id,
         course_id=course.id if course else None,
@@ -863,7 +1438,7 @@ async def submit_assignment(
     )
     stored_files = _save_uploaded_files(files, upload_folder)
 
-    auto_review = _build_auto_review(assignment=assignment, answer_text=answer_text, files=stored_files)
+    auto_review = await _build_auto_review(assignment=assignment, answer_text=answer_text, files=stored_files)
 
     submission = store.create_submission(
         student_username=student_username,
@@ -927,6 +1502,7 @@ async def review_submission(
         total_score=request.total_score,
         feedback=request.feedback,
         rubric_scores=[item.model_dump() for item in request.rubric_scores],
+        criterion_scores=[item.model_dump() for item in request.criterion_scores],
         wrongbook_items=[item.model_dump() for item in request.wrongbook_items],
     )
     if not submission:

@@ -618,6 +618,7 @@ export function GlobalProvider({ children }: { children: React.ReactNode }) {
     start: ["/", "/chat", "/history", "/knowledge", "/notebook"],
     learnResearch: [
       "/question",
+      "/assignment-review",
       "/solver",
       "/guide",
       "/ideagen",
