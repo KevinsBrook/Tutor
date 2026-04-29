@@ -14,7 +14,7 @@ import { initializeTheme, setTheme, getStoredTheme } from "@/lib/theme";
 import { UISettings, Theme, Language } from "@/types/common";
 
 // Language storage key
-const LANGUAGE_STORAGE_KEY = "deeptutor-language";
+const LANGUAGE_STORAGE_KEY = "mingke-language";
 
 // Helper to get initial settings
 function getInitialSettings(): UISettings {

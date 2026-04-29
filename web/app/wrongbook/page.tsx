@@ -89,7 +89,6 @@ export default function WrongbookPage() {
           <BookX className="h-7 w-7 text-rose-500" />
           <div>
             <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">错题本</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">用于汇总作业评审后的错题与反馈。</p>
           </div>
         </div>
 
@@ -104,7 +103,7 @@ export default function WrongbookPage() {
 
       {items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-500">
-          暂无错题记录。作业评审链路接入后，错题会自动沉淀到这里。
+          暂无错题记录。
           <div className="mt-4">
             <Link href="/question" className="text-indigo-600 hover:underline">
               返回作业评审

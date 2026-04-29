@@ -961,9 +961,6 @@ export default function KnowledgePage() {
             <BookOpen className="w-8 h-8 text-blue-600 dark:text-blue-400" />
             底层知识库 / RAG 管理
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-2">
-            这里保留原有知识库能力，课程资料会在课程中心里自动关联到课程和章节。
-          </p>
         </div>
         <div className="flex gap-3">
           <button

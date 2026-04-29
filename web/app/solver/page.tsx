@@ -224,11 +224,6 @@ export default function SolverPage() {
               <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">
                 {t("How can I help you today?")}
               </h3>
-              <p className="text-slate-500 dark:text-slate-400 mb-8 leading-relaxed">
-                {t(
-                  "I can help you solve complex STEM problems using multi-step reasoning. Try asking about calculus, physics, or coding algorithms.",
-                )}
-              </p>
               <div className="grid grid-cols-1 gap-3 w-full text-sm">
                 {[
                   "Calculate the linear convolution of x=[1,2,3] and h=[4,5]",
@@ -398,7 +393,7 @@ export default function SolverPage() {
                     <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
                       <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 font-medium">
                         <CheckCircle2 className="w-4 h-4" />
-                        {t("Verified by DeepTutor Logic Engine")}
+                        {t("Verified by reasoning engine")}
                       </div>
                       <button
                         onClick={() => {
@@ -553,7 +548,7 @@ export default function SolverPage() {
           </div>
           <div className="text-center text-[10px] text-slate-400 dark:text-slate-500 mt-2">
             {t(
-              "DeepTutor can make mistakes. Please verify important information.",
+              "AI can make mistakes. Please verify important information.",
             )}
           </div>
         </div>

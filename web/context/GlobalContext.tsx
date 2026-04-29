@@ -26,7 +26,7 @@ import {
 import { debounce } from "@/lib/debounce";
 
 // Language storage key
-const LANGUAGE_STORAGE_KEY = "deeptutor-language";
+const LANGUAGE_STORAGE_KEY = "mingke-language";
 
 // --- Types ---
 interface LogEntry {

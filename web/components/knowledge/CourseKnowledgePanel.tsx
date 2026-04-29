@@ -707,7 +707,6 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
               <GraduationCap className="h-6 w-6 text-emerald-600" />
               课程中心
             </h1>
-            <p className="mt-1 text-sm text-slate-500">按课程组织章节、资料和知识点，课程资料不会出现在底层知识库列表中。</p>
           </div>
           <div className="flex gap-2">
             <button className={actionButton} onClick={refresh} disabled={loading}>
@@ -732,7 +731,7 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
           </div>
         ) : courses.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-700">
-            暂无课程。教师可以从右上角创建第一门课程。
+            暂无课程。
           </div>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -796,7 +795,6 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
             <h1 className="truncate text-2xl font-semibold text-slate-950 dark:text-slate-50">
               {selectedCourse?.name || "课程详情"}
             </h1>
-            <p className="mt-1 text-sm text-slate-500">{selectedCourse?.description || "暂无课程说明"}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className={actionButton} onClick={refresh} disabled={loading}>

@@ -64,30 +64,19 @@ export default function LoginPage() {
           <h1 className="mt-4 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
             欢迎使用智能教学平台
           </h1>
-          <p className="mt-3 max-w-xl text-slate-600">
-            本系统支持教师与学生双端登录。学生可查看个人信息、作业成绩与智能评测结果，
-            教师可查看学生信息、作业成绩与系统自动评分记录。
-          </p>
 
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
               <p className="text-sm font-semibold text-indigo-700">教师端</p>
-              <p className="mt-2 text-sm text-indigo-900">
-                登录后可查看学生信息、成绩与评测结果
-              </p>
             </div>
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
               <p className="text-sm font-semibold text-emerald-700">学生端</p>
-              <p className="mt-2 text-sm text-emerald-900">
-                登录后可查看个人信息、作业成绩与系统反馈
-              </p>
             </div>
           </div>
         </section>
 
         <section className="rounded-3xl border border-white/80 bg-white/88 p-6 shadow-[0_16px_40px_rgba(15,23,42,0.14)] backdrop-blur-xl">
           <h2 className="text-2xl font-bold text-slate-900">登录</h2>
-          <p className="mt-1 text-sm text-slate-500">请输入账号和密码进入系统</p>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
             <label className="block">
@@ -150,9 +139,6 @@ export default function LoginPage() {
             </div>
           </form>
 
-          <div className="mt-6 text-xs text-slate-400">
-            说明：当前页面已接入后端真实登录接口。
-          </div>
         </section>
       </div>
     </div>

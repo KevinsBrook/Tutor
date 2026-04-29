@@ -350,7 +350,6 @@ function StudentMasteryPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">知识点掌握</h1>
-          <p className="mt-1 text-sm text-slate-500">查看课程知识点状态，并从薄弱处直接进入练习。</p>
         </div>
         <button
           onClick={loadData}
@@ -572,7 +571,6 @@ function TeacherMasteryPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">知识点掌握</h1>
-          <p className="mt-1 text-sm text-slate-500">查看课程下学生的掌握状态，并对薄弱知识点发出提醒。</p>
         </div>
         <button
           onClick={loadData}

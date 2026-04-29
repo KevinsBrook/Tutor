@@ -602,9 +602,6 @@ export default function IdeaGenPage() {
               <h1 className="font-bold text-slate-900 dark:text-slate-100">
                 {t("IdeaGen")}
               </h1>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {t("Discover research ideas from your notes")}
-              </p>
             </div>
           </div>
 
@@ -654,11 +651,6 @@ export default function IdeaGenPage() {
               <Brain className="w-16 h-16 text-slate-200 dark:text-slate-600 mb-4" />
               <p className="text-slate-500 dark:text-slate-400 text-center max-w-md">
                 {t("Select notebook records or describe your research topic")}
-                <br />
-                <span className="text-xs text-slate-400 dark:text-slate-500 mt-2 block">
-                  You can select notebooks for context, or simply describe your
-                  research direction in the text field
-                </span>
               </p>
             </div>
           ) : (

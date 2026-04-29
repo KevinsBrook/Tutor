@@ -20,8 +20,11 @@ const bodyFont = Noto_Sans_SC({
 });
 
 export const metadata: Metadata = {
-  title: "DeepTutor Platform",
-  description: "Multi-Agent Teaching & Research Copilot",
+  title: "明课学习平台",
+  description: "明课学习平台",
+  icons: {
+    icon: "/mingke-icon.svg",
+  },
 };
 
 export default function RootLayout({

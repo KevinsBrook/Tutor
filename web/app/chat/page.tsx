@@ -80,9 +80,6 @@ export default function ChatPage() {
               </div>
               <div>
                 <h1 className="text-lg font-semibold text-slate-950">智能问答</h1>
-                <p className="text-sm text-slate-500">
-                  独立问答页面，可结合知识库和联网搜索辅助学习。
-                </p>
               </div>
             </div>
 
@@ -159,9 +156,6 @@ export default function ChatPage() {
               <div className="flex h-full items-center justify-center text-center">
                 <div>
                   <Bot className="mx-auto h-10 w-10 text-slate-300" />
-                  <p className="mt-3 text-sm text-slate-500">
-                    输入问题开始对话，或先选择课程知识库再提问。
-                  </p>
                 </div>
               </div>
             ) : (

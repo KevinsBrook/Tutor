@@ -175,11 +175,6 @@ export default function GuidePage() {
             <h3 className="text-lg font-medium text-slate-600 dark:text-slate-300 mb-2">
               {t("Guided Learning")}
             </h3>
-            <p className="text-sm text-slate-400 dark:text-slate-500 max-w-md text-center leading-relaxed">
-              {t(
-                "Select a notebook, and the system will generate a personalized learning plan. Through interactive pages and intelligent Q&A, you'll gradually master all the content.",
-              )}
-            </p>
           </div>
         ) : isCompleted ? (
           <CompletionSummary summary={sessionState.summary} />
