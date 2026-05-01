@@ -2,15 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  Book,
   Bot,
   Database,
+  FileText,
   Globe,
   Loader2,
   MessageCircle,
+  Paperclip,
   Plus,
   Send,
   Trash2,
   User,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -21,6 +25,7 @@ import "katex/dist/katex.min.css";
 import { useGlobal } from "@/context/GlobalContext";
 import { apiUrl } from "@/lib/api";
 import { processLatexContent } from "@/lib/latex";
+import AddToNotebookModal from "@/components/AddToNotebookModal";
 
 interface KnowledgeBase {
   name: string;
@@ -37,6 +42,15 @@ export default function ChatPage() {
   } = useGlobal();
   const [inputMessage, setInputMessage] = useState("");
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [notebookRecord, setNotebookRecord] = useState<{
+    title: string;
+    userQuery: string;
+    output: string;
+    metadata?: Record<string, any>;
+  } | null>(null);
+  const [showNotebookModal, setShowNotebookModal] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -62,11 +76,101 @@ export default function ChatPage() {
     container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   }, [chatState.messages]);
 
+  const handleSendWithFiles = async (content: string) => {
+    const files = [...selectedFiles];
+    const form = new FormData();
+    form.append("message", content);
+    files.forEach((file) => form.append("files", file));
+    if (chatState.sessionId) {
+      form.append("session_id", chatState.sessionId);
+    }
+
+    setChatState((prev) => ({
+      ...prev,
+      isLoading: true,
+      currentStage: "uploading",
+      messages: [...prev.messages, { role: "user", content }],
+    }));
+    setSelectedFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+
+    try {
+      const res = await fetch(apiUrl("/api/v1/chat/with-files"), {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.message || "文件问答失败");
+
+      setChatState((prev) => ({
+        ...prev,
+        sessionId: data.session_id || prev.sessionId,
+        isLoading: false,
+        currentStage: null,
+        messages: [
+          ...prev.messages,
+          {
+            role: "assistant",
+            content: data.answer || "",
+            sources: data.sources,
+            isStreaming: false,
+          },
+        ],
+      }));
+    } catch (error: any) {
+      setChatState((prev) => ({
+        ...prev,
+        isLoading: false,
+        currentStage: null,
+        messages: [
+          ...prev.messages,
+          {
+            role: "assistant",
+            content: `Error: ${error.message || "文件问答失败"}`,
+          },
+        ],
+      }));
+    }
+  };
+
   const handleSend = () => {
     const content = inputMessage.trim();
     if (!content || chatState.isLoading) return;
-    sendChatMessage(content);
+    if (selectedFiles.length > 0) {
+      handleSendWithFiles(content);
+    } else {
+      sendChatMessage(content);
+    }
     setInputMessage("");
+  };
+
+  const openNotebookModal = (assistantIndex: number, output: string) => {
+    const selectedMessages = chatState.messages.slice(0, assistantIndex + 1);
+    const userMessage = [...selectedMessages]
+      .reverse()
+      .find((message) => message.role === "user");
+    const userQuery = userMessage?.content || "智能问答记录";
+    const conversationOutput = selectedMessages
+      .map((message) => {
+        const speaker = message.role === "user" ? "用户" : "助手";
+        return `### ${speaker}\n\n${message.content}`;
+      })
+      .join("\n\n---\n\n");
+
+    setNotebookRecord({
+      title: userQuery.slice(0, 100) + (userQuery.length > 100 ? "..." : ""),
+      userQuery,
+      output: conversationOutput || output,
+      metadata: {
+        source: "chat",
+        save_scope: "conversation_until_selected_message",
+        message_count: selectedMessages.length,
+        kb_name: chatState.selectedKb || undefined,
+        enable_rag: chatState.enableRag,
+        enable_web_search: chatState.enableWebSearch,
+      },
+    });
+    setShowNotebookModal(true);
   };
 
   return (
@@ -180,12 +284,25 @@ export default function ChatPage() {
                       }`}
                     >
                       {message.role === "assistant" ? (
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkMath]}
-                          rehypePlugins={[rehypeKatex]}
-                        >
-                          {processLatexContent(message.content)}
-                        </ReactMarkdown>
+                        <>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                          >
+                            {processLatexContent(message.content)}
+                          </ReactMarkdown>
+                          {!message.isStreaming && (
+                            <div className="mt-3 flex items-center justify-end border-t border-slate-200 pt-3">
+                              <button
+                                onClick={() => openNotebookModal(index, message.content)}
+                                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
+                              >
+                                <Book className="h-3 w-3" />
+                                添加到笔记
+                              </button>
+                            </div>
+                          )}
+                        </>
                       ) : (
                         <p className="whitespace-pre-wrap">{message.content}</p>
                       )}
@@ -208,7 +325,47 @@ export default function ChatPage() {
           </div>
 
           <div className="border-t border-slate-200 p-4">
+            {selectedFiles.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {selectedFiles.map((file, index) => (
+                  <span
+                    key={`${file.name}-${file.size}-${index}`}
+                    className="inline-flex max-w-[240px] items-center gap-2 rounded-lg border border-sky-100 bg-sky-50 px-2.5 py-1 text-xs text-sky-700"
+                  >
+                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{file.name}</span>
+                    <button
+                      onClick={() =>
+                        setSelectedFiles((prev) => prev.filter((_, i) => i !== index))
+                      }
+                      className="rounded p-0.5 hover:bg-sky-100"
+                      aria-label="移除文件"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept=".txt,.md,.csv,.json,.pdf,.py,.js,.ts,.html,.css"
+                onChange={(e) => {
+                  setSelectedFiles(Array.from(e.target.files || []));
+                }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={chatState.isLoading}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Paperclip className="h-4 w-4" />
+                输入文件
+              </button>
               <input
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
@@ -238,6 +395,21 @@ export default function ChatPage() {
           </div>
         </section>
       </div>
+      {notebookRecord && (
+        <AddToNotebookModal
+          isOpen={showNotebookModal}
+          onClose={() => {
+            setShowNotebookModal(false);
+            setNotebookRecord(null);
+          }}
+          recordType="chat"
+          title={notebookRecord.title}
+          userQuery={notebookRecord.userQuery}
+          output={notebookRecord.output}
+          metadata={notebookRecord.metadata}
+          kbName={chatState.selectedKb}
+        />
+      )}
     </div>
   );
 }

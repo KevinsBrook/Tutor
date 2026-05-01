@@ -144,10 +144,10 @@ export default function StudentPage() {
           </div>
           <div className="flex gap-3">
             <button
-              onClick={() => router.push("/question")}
+              onClick={() => router.push("/student/experiment")}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700"
             >
-              进入题目练习
+              进入实验问答
             </button>
             <button
               onClick={handleLogout}
