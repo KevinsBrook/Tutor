@@ -117,10 +117,15 @@ interface SubmissionItem {
 
 interface WrongbookDraftItem {
   feedback: string;
-  error_type: string;
+  error_type?: string;
   knowledge_point: string;
   knowledge_point_id?: number | null;
-  suggestion: string;
+  suggestion?: string;
+  question_text?: string;
+  student_answer?: string;
+  correct_answer?: string;
+  explanation?: string;
+  question_type?: string;
 }
 
 interface RubricScoreDraft {
@@ -249,6 +254,10 @@ type QuestionSourceMode = "manual" | "course";
 interface PracticeItemReport {
   question_id: string;
   question_type: string;
+  question_text: string;
+  student_answer: string;
+  correct_answer: string;
+  explanation: string;
   status: PracticeStatus;
   score: number;
   max_score: number;
@@ -266,6 +275,7 @@ interface PracticeReport {
 type FollowupStrategy = "same" | "harder" | "easier" | "variant" | "to_choice";
 type PracticeMode = "practice" | "exam";
 type WorkspaceMode = "question" | "assignment";
+const QUESTION_TYPE_OPTIONS = new Set(["choice", "multiple_choice", "true_false", "fill_blank", "written", "mixed"]);
 
 const FILE_HINT = "支持格式：pdf、doc、docx、txt、md、rtf、html";
 const NO_KB_SOURCE = "__none__";
@@ -425,10 +435,12 @@ function buildReviewDraft(sub: SubmissionItem): ReviewDraft {
     wrongbookItems: [
       {
         feedback: "",
-        error_type: "",
         knowledge_point: "",
         knowledge_point_id: null,
-        suggestion: "",
+        question_text: "",
+        student_answer: "",
+        correct_answer: "",
+        question_type: "",
       },
     ],
   };
@@ -453,58 +465,6 @@ function splitValues(raw: string): string[] {
     .filter(Boolean);
 }
 
-function parsePairRecord(raw: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  (raw || "")
-    .split("||")
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .forEach((chunk) => {
-      const [left, right] = chunk.split("=>");
-      const l = (left || "").trim();
-      if (!l) return;
-      result[l] = (right || "").trim();
-    });
-  return result;
-}
-
-function stringifyPairRecord(map: Record<string, string>) {
-  return Object.entries(map)
-    .map(([k, v]) => `${k}=>${v || ""}`)
-    .join("||");
-}
-
-function getQuestionPairs(question: any): Array<{ left: string; right: string }> {
-  if (Array.isArray(question?.pairs)) {
-    return question.pairs
-      .filter((x: any) => x && x.left && x.right)
-      .map((x: any) => ({ left: String(x.left), right: String(x.right) }));
-  }
-  const answerText = String(question?.correct_answer || "");
-  const pairs: Array<{ left: string; right: string }> = [];
-  answerText
-    .split("||")
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .forEach((chunk) => {
-      const [left, right] = chunk.split("=>");
-      if ((left || "").trim() && (right || "").trim()) {
-        pairs.push({ left: left.trim(), right: right.trim() });
-      }
-    });
-  return pairs;
-}
-
-function getQuestionSteps(question: any): string[] {
-  if (Array.isArray(question?.steps) && question.steps.length > 0) {
-    return question.steps.map((x: any) => String(x).trim()).filter(Boolean);
-  }
-  return String(question?.correct_answer || "")
-    .split(/->|=>|,|，/)
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
-
 function downloadTextFile(filename: string, content: string, mime = "text/plain;charset=utf-8") {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -517,7 +477,7 @@ function downloadTextFile(filename: string, content: string, mime = "text/plain;
 
 function buildPracticeCsv(report: PracticeReport): string {
   const rows = [
-    ["题号", "题型", "判定", "得分", "满分", "知识点", "评分理由"],
+    ["题号", "题型", "判定", "得分", "满分", "知识点", "评分理由", "解析"],
     ...report.items.map((item, idx) => [
       String(idx + 1),
       item.question_type,
@@ -526,8 +486,9 @@ function buildPracticeCsv(report: PracticeReport): string {
       String(item.max_score),
       item.knowledge_point || "",
       item.reason.replace(/\n/g, " "),
+      item.explanation.replace(/\n/g, " "),
     ]),
-    ["总分", "", "", String(report.total_score), String(report.max_score), "", ""],
+    ["总分", "", "", String(report.total_score), String(report.max_score), "", "", ""],
   ];
   return rows
     .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
@@ -834,7 +795,10 @@ function buildMoodleXmlExport(results: any[]): string {
   return `<?xml version="1.0" encoding="UTF-8"?><quiz>${questions}</quiz>`;
 }
 
-function evaluateObjectiveQuestion(question: any, answerRaw: string): Omit<PracticeItemReport, "question_id"> {
+function evaluateObjectiveQuestion(
+  question: any,
+  answerRaw: string,
+): Omit<PracticeItemReport, "question_id" | "question_text" | "student_answer" | "correct_answer" | "explanation"> {
   const qType = String(question.question_type || "written");
   const maxScore = 1;
 
@@ -894,43 +858,6 @@ function evaluateObjectiveQuestion(question: any, answerRaw: string): Omit<Pract
     };
   }
 
-  if (qType === "ordering") {
-    const steps = getQuestionSteps(question);
-    const userRanks = parsePairRecord(answerRaw);
-    const expectedRanks = Object.fromEntries(steps.map((step, idx) => [step, String(idx + 1)]));
-    const checked = steps.length;
-    const match = steps.filter((step) => (userRanks[step] || "") === expectedRanks[step]).length;
-    const ratio = checked > 0 ? match / checked : 0;
-    const ok = ratio >= 0.99;
-    const partial = !ok && ratio >= 0.4;
-    return {
-      question_type: qType,
-      status: ok ? "correct" : partial ? "partial" : "incorrect",
-      score: Number(ratio.toFixed(2)),
-      max_score: maxScore,
-      reason: ok ? "步骤顺序正确。" : partial ? "部分顺序正确。" : "步骤顺序不正确。",
-      knowledge_point: question.knowledge_point,
-    };
-  }
-
-  if (qType === "matching" || qType === "term_definition") {
-    const pairs = getQuestionPairs(question);
-    const userPairs = parsePairRecord(answerRaw);
-    const total = pairs.length;
-    const match = pairs.filter((p) => normalizeText(userPairs[p.left] || "") === normalizeText(p.right)).length;
-    const ratio = total > 0 ? match / total : 0;
-    const ok = ratio >= 0.99;
-    const partial = !ok && ratio >= 0.4;
-    return {
-      question_type: qType,
-      status: ok ? "correct" : partial ? "partial" : "incorrect",
-      score: Number(ratio.toFixed(2)),
-      max_score: maxScore,
-      reason: ok ? "配对结果正确。" : partial ? "部分配对正确。" : "配对结果不正确。",
-      knowledge_point: question.knowledge_point,
-    };
-  }
-
   return {
     question_type: qType,
     status: "incorrect",
@@ -952,8 +879,6 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
   const [submittedMap, setSubmittedMap] = useState<Record<number, boolean>>({});
   const [practiceReport, setPracticeReport] = useState<PracticeReport | null>(null);
   const [gradingPractice, setGradingPractice] = useState(false);
-  const [matchingInput, setMatchingInput] = useState<Record<number, Record<string, string>>>({});
-  const [orderingInput, setOrderingInput] = useState<Record<number, Record<string, string>>>({});
   const [practiceMode, setPracticeMode] = useState<PracticeMode>("practice");
   const [timerMinutes, setTimerMinutes] = useState(15);
   const [timeLeftSec, setTimeLeftSec] = useState(0);
@@ -999,6 +924,24 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
   const currentQuestion = questionState.results[activeIndex];
   const canStartCustom = questionState.topic.trim().length > 0;
 
+  const returnToQuestionConfig = () => {
+    resetQuestionGen();
+    setQuestionState((prev) => ({
+      ...prev,
+      step: "config",
+      results: [],
+      logs: [],
+    }));
+    setAnswers({});
+    setSubmittedMap({});
+    setPracticeReport(null);
+    setActiveIndex(0);
+    setTimerRunning(false);
+    setTimeLeftSec(0);
+    setMessage("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   useEffect(() => {
     setQuestionState((prev) => {
       const desiredMode = isAssignmentMode ? "mimic" : "knowledge";
@@ -1006,6 +949,13 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
       return { ...prev, mode: desiredMode, step: "config" };
     });
   }, [isAssignmentMode, setQuestionState]);
+
+  useEffect(() => {
+    if (isAssignmentMode) return;
+    if (!QUESTION_TYPE_OPTIONS.has(questionState.type)) {
+      setQuestionState((prev) => ({ ...prev, type: "choice" }));
+    }
+  }, [isAssignmentMode, questionState.type, setQuestionState]);
   const selectedQuestionCourse = useMemo(
     () => courseOptions.find((course) => course.id === selectedQuestionCourseId) || null,
     [courseOptions, selectedQuestionCourseId],
@@ -1474,13 +1424,13 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
       }));
 
     const wrongbookItems = draft.wrongbookItems
-      .filter((w) => w.feedback.trim() || w.knowledge_point.trim() || w.error_type.trim())
+      .filter((w) => w.feedback.trim() || w.knowledge_point.trim() || (w.error_type || "").trim())
       .map((w) => ({
         feedback: w.feedback.trim() || "建议复盘本题。",
-        error_type: w.error_type.trim(),
+        error_type: (w.error_type || "").trim(),
         knowledge_point: w.knowledge_point.trim(),
         knowledge_point_id: w.knowledge_point_id || null,
-        suggestion: w.suggestion.trim(),
+        suggestion: (w.suggestion || "").trim(),
       }));
 
     setLoading(true);
@@ -1525,8 +1475,6 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
       questionState.selectedKb,
     );
     setAnswers({});
-    setMatchingInput({});
-    setOrderingInput({});
     setSubmittedMap({});
     setPracticeReport(null);
     setActiveIndex(0);
@@ -1564,8 +1512,6 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
       kbName,
     );
     setAnswers({});
-    setMatchingInput({});
-    setOrderingInput({});
     setSubmittedMap({});
     setPracticeReport(null);
     setActiveIndex(0);
@@ -1659,9 +1605,14 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
           assignment_id: "question_practice",
           assignment_title: "自定义出题练习",
           feedback: item.reason,
-          error_type: item.status === "partial" ? "部分掌握" : "理解偏差",
+          question_text: item.question_text,
+          student_answer: item.student_answer,
+          correct_answer: item.correct_answer,
+          explanation: item.explanation,
+          question_type: item.question_type,
+          score: item.score,
+          max_score: item.max_score,
           knowledge_point: item.knowledge_point || questionState.topic || "未指定知识点",
-          suggestion: "建议在错题本中使用同知识点再练或变式训练。",
         }),
       });
     }
@@ -1707,6 +1658,9 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
         const item = questionState.results[idx];
         const answer = answers[idx] || "";
         const qType = String(item.question.question_type || "written");
+        const questionText = String(item.question.question || "");
+        const correctAnswer = String(item.question.correct_answer || "");
+        const explanation = String(item.question.explanation || "");
         if (["written", "essay", "subjective"].includes(qType.toLowerCase())) {
           const res = await fetch(apiUrl("/api/v1/question/evaluate/written"), {
             method: "POST",
@@ -1718,6 +1672,10 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
           reportItems.push({
             question_id: item.question_id || `q_${idx + 1}`,
             question_type: qType,
+            question_text: questionText,
+            student_answer: answer,
+            correct_answer: correctAnswer,
+            explanation,
             status: (data.status || "incorrect") as PracticeStatus,
             score: Number(ratio.toFixed(2)),
             max_score: 1,
@@ -1727,6 +1685,10 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
         } else {
           reportItems.push({
             question_id: item.question_id || `q_${idx + 1}`,
+            question_text: questionText,
+            student_answer: answer,
+            correct_answer: correctAnswer,
+            explanation,
             ...evaluateObjectiveQuestion(item.question, answer),
           });
         }
@@ -1809,8 +1771,6 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
       setPracticeReport(null);
       setAnswers({});
       setSubmittedMap({});
-      setMatchingInput({});
-      setOrderingInput({});
       setActiveIndex(0);
       setMessage("已启动再练生成。");
     },
@@ -1978,9 +1938,6 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
                 <option value="multiple_choice">多选题</option>
                 <option value="true_false">判断题</option>
                 <option value="fill_blank">填空题</option>
-                <option value="matching">匹配题</option>
-                <option value="term_definition">关键词-定义配对</option>
-                <option value="ordering">步骤排序题</option>
                 <option value="written">问答题</option>
                 <option value="mixed">混合题</option>
               </select>
@@ -2127,6 +2084,13 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
                     剩余时间 {formatDuration(timeLeftSec)}
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={returnToQuestionConfig}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                >
+                  返回出题选择
+                </button>
               </div>
             </div>
             <p className="mt-3 whitespace-pre-wrap text-sm text-slate-800">{currentQuestion.question.question}</p>
@@ -2176,54 +2140,9 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
                 placeholder="请按顺序填写答案，多个空用逗号分隔"
               />
             )}
-            {(String(currentQuestion.question.question_type || "").toLowerCase() === "matching" ||
-              String(currentQuestion.question.question_type || "").toLowerCase() === "term_definition") && (
-              <div className="mt-3 space-y-2">
-                {getQuestionPairs(currentQuestion.question).map((pair) => (
-                  <div key={pair.left} className="grid gap-2 md:grid-cols-[1fr_1fr]">
-                    <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{pair.left}</div>
-                    <input
-                      value={matchingInput[activeIndex]?.[pair.left] || ""}
-                      onChange={(e) => {
-                        setMatchingInput((prev) => {
-                          const next = { ...(prev[activeIndex] || {}), [pair.left]: e.target.value };
-                          setAnswers((a) => ({ ...a, [activeIndex]: stringifyPairRecord(next) }));
-                          return { ...prev, [activeIndex]: next };
-                        });
-                      }}
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                      placeholder="输入对应项"
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-            {String(currentQuestion.question.question_type || "").toLowerCase() === "ordering" && (
-              <div className="mt-3 space-y-2">
-                <p className="text-xs text-slate-500">请给每一步填写顺序序号（1 开始）。</p>
-                {getQuestionSteps(currentQuestion.question).map((step) => (
-                  <div key={step} className="grid gap-2 md:grid-cols-[1fr_120px]">
-                    <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{step}</div>
-                    <input
-                      value={orderingInput[activeIndex]?.[step] || ""}
-                      onChange={(e) => {
-                        const clean = e.target.value.replace(/[^\d]/g, "").slice(0, 2);
-                        setOrderingInput((prev) => {
-                          const next = { ...(prev[activeIndex] || {}), [step]: clean };
-                          setAnswers((a) => ({ ...a, [activeIndex]: stringifyPairRecord(next) }));
-                          return { ...prev, [activeIndex]: next };
-                        });
-                      }}
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                      placeholder="序号"
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
             {(String(currentQuestion.question.question_type || "").toLowerCase() === "written" ||
               (!currentQuestion.question.options &&
-                !["fill_blank", "matching", "term_definition", "ordering"].includes(
+                !["fill_blank"].includes(
                   String(currentQuestion.question.question_type || "").toLowerCase(),
                 ))) && (
               <textarea
@@ -2255,6 +2174,13 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
                 className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
               >
                 {gradingPractice ? "评分中..." : practiceMode === "exam" ? "交卷并评分" : "提交本次练习并评分"}
+              </button>
+              <button
+                type="button"
+                onClick={returnToQuestionConfig}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+              >
+                返回出题选择
               </button>
             </div>
           </section>
@@ -2322,6 +2248,20 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
               <p className="mt-1 text-sm text-emerald-800">
                 得分：{practiceReport.total_score} / {practiceReport.max_score}
               </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={returnToQuestionConfig}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                >
+                  返回出题选择
+                </button>
+                <button
+                  onClick={returnToQuestionConfig}
+                  className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-100"
+                >
+                  生成新题目
+                </button>
+              </div>
               <div className="mt-3 space-y-2">
                 {practiceReport.items.map((item, idx) => (
                   <div key={item.question_id} className="rounded-lg bg-white p-3 text-sm">
@@ -2329,6 +2269,12 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
                       第 {idx + 1} 题：{item.status === "correct" ? "正确" : item.status === "partial" ? "部分正确" : "错误"}（{item.score}/{item.max_score}）
                     </p>
                     <p className="mt-1 text-slate-600">{item.reason}</p>
+                    {item.explanation && (
+                      <div className="mt-2 rounded-lg bg-slate-50 p-3 text-slate-700">
+                        <p className="text-xs font-semibold text-slate-500">解析</p>
+                        <p className="mt-1 whitespace-pre-wrap">{item.explanation}</p>
+                      </div>
+                    )}
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button onClick={() => triggerFollowupGeneration(idx, "same")} className="rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs text-indigo-700 hover:bg-indigo-100">同知识点再练</button>
                       <button onClick={() => triggerFollowupGeneration(idx, "harder")} className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs text-rose-700 hover:bg-rose-100">提高难度</button>

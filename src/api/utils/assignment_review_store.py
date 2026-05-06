@@ -391,6 +391,13 @@ class AssignmentReviewStore:
                         "knowledge_point_id": item.get("knowledge_point_id"),
                         "suggestion": item.get("suggestion", ""),
                         "source_submission_id": submission_id,
+                        "question_text": item.get("question_text", ""),
+                        "student_answer": item.get("student_answer", ""),
+                        "correct_answer": item.get("correct_answer", ""),
+                        "explanation": item.get("explanation", ""),
+                        "question_type": item.get("question_type", ""),
+                        "score": item.get("score"),
+                        "max_score": item.get("max_score"),
                         "practice_history": [],
                         "created_at": time.time(),
                     }
@@ -447,6 +454,13 @@ class AssignmentReviewStore:
         knowledge_point_id: int | None = None,
         suggestion: str = "",
         source_submission_id: str = "",
+        question_text: str = "",
+        student_answer: str = "",
+        correct_answer: str = "",
+        explanation: str = "",
+        question_type: str = "",
+        score: float | None = None,
+        max_score: float | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             payload = self._read_json_file(self.paths.wrongbook_file)
@@ -462,6 +476,13 @@ class AssignmentReviewStore:
                 "knowledge_point_id": knowledge_point_id,
                 "suggestion": suggestion,
                 "source_submission_id": source_submission_id,
+                "question_text": question_text,
+                "student_answer": student_answer,
+                "correct_answer": correct_answer,
+                "explanation": explanation,
+                "question_type": question_type,
+                "score": score,
+                "max_score": max_score,
                 "practice_history": [],
                 "created_at": time.time(),
             }

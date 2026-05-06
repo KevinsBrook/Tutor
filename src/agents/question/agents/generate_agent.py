@@ -8,6 +8,7 @@ Uses unified BaseAgent for LLM calls and configuration management.
 
 import json
 import re
+import hashlib
 from typing import Any
 
 from src.agents.base_agent import BaseAgent
@@ -67,9 +68,6 @@ class GenerateAgent(BaseAgent):
         """
         self.logger.info("Starting question generation")
 
-        # Build requirements string
-        requirements_str = json.dumps(requirement, ensure_ascii=False, indent=2)
-
         # Resolve requested question type (focus type has higher priority)
         raw_type = None
         if focus and focus.get("type"):
@@ -77,6 +75,9 @@ class GenerateAgent(BaseAgent):
         elif requirement.get("question_type"):
             raw_type = str(requirement.get("question_type"))
         requested_type = normalize_question_type(raw_type, fallback="written")
+        effective_requirement = dict(requirement)
+        effective_requirement["question_type"] = requested_type
+        requirements_str = json.dumps(effective_requirement, ensure_ascii=False, indent=2)
 
         # Build focus string
         if focus:
@@ -302,13 +303,9 @@ class GenerateAgent(BaseAgent):
         if "question" not in question:
             raise ValueError("Question response missing 'question' field")
 
-        # Ensure question_type exists
-        if "question_type" not in question:
-            question["question_type"] = requested_type
-        question["question_type"] = normalize_question_type(
-            str(question.get("question_type")),
-            fallback=requested_type,
-        )
+        # The requested type is the UI contract. Keep it authoritative because
+        # the model can drift from multiple_choice back to choice.
+        question["question_type"] = requested_type
 
         # Validate options for choice questions
         if question.get("question_type") == "choice":
@@ -351,30 +348,6 @@ class GenerateAgent(BaseAgent):
             if not question["blanks"] and question.get("correct_answer"):
                 question["blanks"] = [str(question.get("correct_answer")).strip()]
 
-        # Matching / term-definition canonical fields
-        if question.get("question_type") in {"matching", "term_definition"}:
-            if not isinstance(question.get("pairs"), list):
-                question["pairs"] = self._pairs_from_answer(str(question.get("correct_answer", "")))
-            normalized_pairs = []
-            for p in question.get("pairs", []):
-                if isinstance(p, dict) and p.get("left") and p.get("right"):
-                    normalized_pairs.append(
-                        {"left": str(p.get("left")).strip(), "right": str(p.get("right")).strip()}
-                    )
-            question["pairs"] = normalized_pairs
-            if not question["correct_answer"] and normalized_pairs:
-                question["correct_answer"] = "||".join(
-                    [f"{x['left']}=>{x['right']}" for x in normalized_pairs]
-                )
-
-        # Ordering canonical fields
-        if question.get("question_type") == "ordering":
-            if not isinstance(question.get("steps"), list):
-                question["steps"] = self._split_order_steps(str(question.get("correct_answer", "")))
-            question["steps"] = [str(x).strip() for x in question.get("steps", []) if str(x).strip()]
-            if not question.get("correct_answer") and question["steps"]:
-                question["correct_answer"] = " -> ".join(question["steps"])
-
         return question
 
     def _refine_choice_question(self, question: dict[str, Any]) -> dict[str, Any]:
@@ -416,11 +389,15 @@ class GenerateAgent(BaseAgent):
         final_values = [answer_text] + selected
         while len(final_values) < 4:
             final_values.append(f"Distractor {len(final_values)}")
+        final_values = self._stable_shuffle_options(
+            final_values[:4],
+            seed_text=f"{question.get('question', '')}|{answer_text}",
+        )
 
         final_options: dict[str, str] = {}
         labels = ["A", "B", "C", "D"]
         correct_new_label = "A"
-        for idx, val in enumerate(final_values[:4]):
+        for idx, val in enumerate(final_values):
             label = labels[idx]
             final_options[label] = val
             if val == answer_text:
@@ -428,9 +405,14 @@ class GenerateAgent(BaseAgent):
 
         question["options"] = final_options
         question["correct_answer"] = correct_new_label
+        question["explanation"] = self._realign_explanation_labels(
+            explanation=str(question.get("explanation", "")),
+            old_labels=[answer_label] if answer_label in {"A", "B", "C", "D"} else [],
+            new_labels=[correct_new_label],
+        )
         question["distractor_meta"] = {
             "candidate_count": max(0, unique_count - 1),
-            "selected_count": max(0, len(final_values[:4]) - 1),
+            "selected_count": max(0, len(final_values) - 1),
             "duplicate_removed": max(0, original_count - unique_count),
         }
         return question
@@ -477,11 +459,15 @@ class GenerateAgent(BaseAgent):
                     break
         while len(final_values) < 4:
             final_values.append(f"Distractor {len(final_values)}")
+        final_values = self._stable_shuffle_options(
+            final_values[:6],
+            seed_text=f"{question.get('question', '')}|{';'.join(correct_texts)}",
+        )
 
         labels = ["A", "B", "C", "D", "E", "F"]
         final_options: dict[str, str] = {}
         answer_labels: list[str] = []
-        for idx, val in enumerate(final_values[:6]):
+        for idx, val in enumerate(final_values):
             label = labels[idx]
             final_options[label] = val
             if val in correct_texts:
@@ -491,12 +477,56 @@ class GenerateAgent(BaseAgent):
             answer_labels = ["A"]
         question["options"] = final_options
         question["correct_answer"] = ",".join(sorted(answer_labels))
+        question["explanation"] = self._realign_explanation_labels(
+            explanation=str(question.get("explanation", "")),
+            old_labels=[x for x in raw_answers if x in base_map],
+            new_labels=answer_labels,
+        )
         question["distractor_meta"] = {
             "candidate_count": max(0, len(cleaned_pairs) - len(correct_texts)),
-            "selected_count": max(0, len(final_values[:6]) - len(correct_texts)),
+            "selected_count": max(0, len(final_values) - len(correct_texts)),
             "duplicate_removed": max(0, original_count - len(cleaned_pairs)),
         }
         return question
+
+    @staticmethod
+    def _stable_shuffle_options(values: list[str], seed_text: str) -> list[str]:
+        indexed = list(enumerate(values))
+
+        def key(item: tuple[int, str]) -> str:
+            idx, value = item
+            material = f"{seed_text}|{idx}|{value}".encode("utf-8", errors="ignore")
+            return hashlib.sha256(material).hexdigest()
+
+        return [value for _, value in sorted(indexed, key=key)]
+
+    @staticmethod
+    def _realign_explanation_labels(
+        explanation: str,
+        old_labels: list[str],
+        new_labels: list[str],
+    ) -> str:
+        if not explanation or not old_labels or not new_labels:
+            return explanation
+
+        old_answer = ",".join(sorted(dict.fromkeys(x.upper() for x in old_labels if x)))
+        new_answer = ",".join(sorted(dict.fromkeys(x.upper() for x in new_labels if x)))
+        if not old_answer or old_answer == new_answer:
+            return explanation
+
+        replacements = [
+            (rf"答案\s*(?:是|为|:|：)?\s*{re.escape(old_answer)}\b", f"答案为{new_answer}"),
+            (rf"正确答案\s*(?:是|为|:|：)?\s*{re.escape(old_answer)}\b", f"正确答案为{new_answer}"),
+            (rf"选择\s*{re.escape(old_answer)}\b", f"选择{new_answer}"),
+            (rf"选\s*{re.escape(old_answer)}\b", f"选{new_answer}"),
+            (rf"answer\s*(?:is|:)?\s*{re.escape(old_answer)}\b", f"answer is {new_answer}"),
+            (rf"correct answer\s*(?:is|:)?\s*{re.escape(old_answer)}\b", f"correct answer is {new_answer}"),
+            (rf"option\s*{re.escape(old_answer)}\b", f"option {new_answer}"),
+        ]
+        updated = explanation
+        for pattern, replacement in replacements:
+            updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
+        return updated
 
     @staticmethod
     def _clean_option_candidates(options: dict[str, Any]) -> list[tuple[str, str]]:
@@ -590,15 +620,18 @@ class GenerateAgent(BaseAgent):
         if requested_type == "choice":
             return f"{common}\nSingle-choice: options must include A/B/C/D. correct_answer must be one of A/B/C/D."
         if requested_type == "multiple_choice":
-            return f"{common}\nMultiple-choice: options must include A/B/C/D. correct_answer uses comma-separated labels, e.g. A,C."
+            return (
+                f"{common}\n"
+                "Multiple-choice: question_type must be exactly multiple_choice. "
+                "The stem must clearly ask for multiple correct answers, e.g. "
+                "'Which of the following statements are correct?'. "
+                "options must include A/B/C/D. correct_answer must contain at "
+                "least two comma-separated labels, e.g. A,C."
+            )
         if requested_type == "true_false":
             return f"{common}\nTrue/false: options fixed as A=True, B=False; correct_answer must be A or B."
         if requested_type == "fill_blank":
             return f"{common}\nFill-blank: provide blanks array in order; correct_answer joins blank answers with commas."
-        if requested_type in {"matching", "term_definition"}:
-            return f"{common}\nMatching: provide pairs array with {{left,right}}; correct_answer format: left=>right||left=>right."
-        if requested_type == "ordering":
-            return f"{common}\nOrdering: provide steps array in correct order; correct_answer format: step1 -> step2 -> step3."
         return common
 
     def _clean_json_string(self, json_str: str) -> str:
