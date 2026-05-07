@@ -52,7 +52,8 @@ export default function StudentExperimentPage() {
   const [userRole, setUserRole] = useState("");
 
   const [loading, setLoading] = useState(true);
-
+  
+  const [interimInputs, setInterimInputs] = useState<Record<number, string>>({});
   const [uploading, setUploading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [generatingForId, setGeneratingForId] = useState<number | null>(null);
@@ -317,53 +318,153 @@ export default function StudentExperimentPage() {
       return;
     }
   
+    if (remainingSeconds <= 0) {
+      alert("答题时间已结束，无法继续语音输入");
+      return;
+    }
+  
+    // 如果之前有识别对象，先停止，避免多个识别同时运行
+    if (recognitionRef.current) {
+      shouldKeepRecordingRef.current = false;
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+  
     const recognition = new SpeechRecognition();
+  
     recognition.lang = "zh-CN";
-    recognition.continuous = false;
+  
+    // 关键修改 1：开启连续识别
+    recognition.continuous = true;
+  
+    // 保留中间结果，让学生说话时页面能实时显示文字
     recognition.interimResults = true;
   
+    recognitionRef.current = recognition;
+    shouldKeepRecordingRef.current = true;
     setRecordingQuestionId(questionId);
   
-    let finalTranscript = "";
+    // 保留已有回答内容，避免自动重启后把前面的识别文本清空
+    let finalTranscript = answerInputs[questionId] || "";
   
-    recognition.onresult = (event: any) => {
-      let interimTranscript = "";
+    const hasAnswerTimeLeft = () => {
+      if (!deadlineAt) return true;
   
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
+      const normalizedDeadline =
+        typeof deadlineAt === "string" && deadlineAt.includes("T")
+          ? deadlineAt
+          : String(deadlineAt).replace(" ", "T");
   
-      setAnswerInputs((prev) => ({
-        ...prev,
-        [questionId]: `${finalTranscript}${interimTranscript}`,
-      }));
+      return Date.now() < new Date(normalizedDeadline).getTime();
     };
   
+    recognition.onresult = (event: any) => {
+      let newInterimTranscript = "";
+      let hasNewFinal = false;
+    
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const transcript = result[0]?.transcript || "";
+    
+        if (result.isFinal) {
+          finalTranscript += transcript;
+          hasNewFinal = true;
+        } else {
+          newInterimTranscript += transcript;
+        }
+      }
+    
+      // 只把最终结果写入正式回答框
+      if (hasNewFinal) {
+        setAnswerInputs((prev) => {
+          if (prev[questionId] === finalTranscript) return prev;
+          return {
+            ...prev,
+            [questionId]: finalTranscript,
+          };
+        });
+      }
+    
+      // 中间结果单独显示，不写进正式回答框
+      setInterimInputs((prev) => {
+        if (prev[questionId] === newInterimTranscript) return prev;
+        return {
+          ...prev,
+          [questionId]: newInterimTranscript,
+        };
+      });
+    };
     recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event);
-      alert("语音识别失败，请重试");
+      console.warn("Speech recognition error:", event);
+  
+      // 停顿过久时，Chrome 可能会触发 no-speech。
+      // 这种情况不要弹窗，也不要真正结束，交给 onend 自动重启。
+      if (event.error === "no-speech") {
+        return;
+      }
+  
+      // 用户主动停止时可能触发 aborted，也不需要报错
+      if (event.error === "aborted") {
+        return;
+      }
+  
+      shouldKeepRecordingRef.current = false;
       setRecordingQuestionId(null);
+      alert("语音识别失败，请重试");
     };
   
     recognition.onend = () => {
-      setRecordingQuestionId(null);
+      if (!shouldKeepRecordingRef.current || !hasAnswerTimeLeft()) {
+        setInterimInputs((prev) => ({
+          ...prev,
+          [questionId]: "",
+        }));
+    
+        setRecordingQuestionId(null);
+        recognitionRef.current = null;
+        shouldKeepRecordingRef.current = false;
+        return;
+      }
+    
+      setTimeout(() => {
+        try {
+          if (shouldKeepRecordingRef.current && hasAnswerTimeLeft()) {
+            recognition.start();
+          }
+        } catch (error) {
+          console.warn("语音识别自动重启失败：", error);
+        }
+      }, 250);
     };
   
-    recognition.start();
-  
-    // 挂到 window 上，方便 stop 时结束当前识别
-    (window as any).__currentRecognition = recognition;
+    try {
+      recognition.start();
+      (window as any).__currentRecognition = recognition;
+    } catch (error) {
+      console.warn("语音识别启动失败：", error);
+      shouldKeepRecordingRef.current = false;
+      setRecordingQuestionId(null);
+    }
   };
   const handleStopSpeech = () => {
     shouldKeepRecordingRef.current = false;
+  
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (error) {
+        console.warn("停止语音识别失败：", error);
+      }
+      recognitionRef.current = null;
     }
+  
+    if (recordingQuestionId !== null) {
+      setInterimInputs((prev) => ({
+        ...prev,
+        [recordingQuestionId]: "",
+      }));
+    }
+  
     setRecordingQuestionId(null);
   };
   const handleSubmitAnswer = async (questionId: number) => {
