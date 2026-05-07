@@ -14,6 +14,7 @@ export default function TeacherStudentDetailPage() {
 
   const [student, setStudent] = useState<any>(null);
   const [scores, setScores] = useState<any[]>([]);
+  const [answerDetails, setAnswerDetails] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [scoreForm, setScoreForm] = useState({
     assignment_no: "",
@@ -57,6 +58,17 @@ export default function TeacherStudentDetailPage() {
           throw new Error(scoreData.detail || "获取学生成绩失败");
         }
         setScores(scoreData.scores || []);
+        const answerRes = await fetch(
+          apiUrl(`/api/v1/teacher/students/${studentId}/experiment-answers`),
+        );
+        
+        const answerData = await answerRes.json();
+        
+        if (!answerRes.ok) {
+          throw new Error(answerData.detail || "获取学生问答详情失败");
+        }
+        
+        setAnswerDetails(answerData.submissions || []);
       } catch (error: any) {
         alert(error.message || "加载失败");
       } finally {
@@ -220,7 +232,130 @@ export default function TeacherStudentDetailPage() {
             </div>
           </div>
         </div>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <h2 className="text-xl font-semibold text-slate-900 mb-4">
+            实验问答详情
+          </h2>
 
+          {answerDetails.length === 0 ? (
+            <div className="text-slate-500">暂无实验问答记录</div>
+          ) : (
+            <div className="space-y-5">
+              {answerDetails.map((submission) => (
+                <div
+                  key={submission.id}
+                  className="rounded-xl border border-slate-200 p-5 bg-slate-50"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-slate-900">
+                        第 {submission.assignment_no} 次实验：
+                        {submission.experiment_title}
+                      </h3>
+
+                      <p className="mt-1 text-sm text-slate-500">
+                        文件：{submission.original_filename || "未记录"} ·
+                        状态：{submission.status} ·
+                        问题数：{submission.question_count} ·
+                        回答数：{submission.answer_count}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg bg-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-700">
+                      平均分：{submission.average_score ?? "暂无"}
+                    </div>
+                  </div>
+
+                  {submission.report_text_preview && (
+                    <div className="mt-4 rounded-lg bg-white p-3 text-sm text-slate-600">
+                      <div className="mb-1 font-medium text-slate-800">
+                        实验报告摘要
+                      </div>
+                      {submission.report_text_preview}
+                      {submission.report_text_length > 300 ? "..." : ""}
+                    </div>
+                  )}
+
+                  <div className="mt-4 space-y-4">
+                    {submission.questions.map((question: any) => (
+                      <div
+                        key={question.question_id}
+                        className="rounded-lg bg-white p-4 border border-slate-100"
+                      >
+                        <div className="font-medium text-slate-900">
+                          问题 {question.question_no}：{question.question_text}
+                        </div>
+
+                        <div className="mt-2 text-sm text-slate-500">
+                          参考要点：{question.reference_points || "无"}
+                        </div>
+
+                        {question.answers.length === 0 ? (
+                          <div className="mt-3 text-sm text-amber-600">
+                            学生尚未回答该问题
+                          </div>
+                      ) : (
+                        <div className="mt-3 space-y-3">
+                          {question.answers.map((answer: any) => (
+                            <div
+                              key={answer.id}
+                              className="rounded-lg border border-slate-200 p-3"
+                            >
+                              <div className="text-sm font-medium text-slate-800">
+                                学生回答
+                              </div>
+
+                              <div className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                                {answer.answer_text}
+                              </div>
+
+                              <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-600 md:grid-cols-4">
+                                <div>
+                                  代码理解：
+                                  {answer.score_code_understanding ?? "未评分"} / 2
+                                </div>
+                                <div>
+                                  概念掌握：
+                                  {answer.score_concept_mastery ?? "未评分"} / 1
+                                </div>
+                                <div>
+                                  问题回答：
+                                  {answer.score_question_response ?? "未评分"} / 2
+                                </div>
+                                <div>
+                                  总分：{answer.total_score ?? "未评分"} / 5
+                                </div>
+                              </div>
+
+                              <div className="mt-3 text-sm text-slate-600">
+                                <span className="font-medium text-slate-800">
+                                  评分理由：
+                                </span>
+                                {answer.grading_reason || "无"}
+                              </div>
+
+                              <div className="mt-2 text-sm text-slate-600">
+                                <span className="font-medium text-slate-800">
+                                  反馈：
+                                </span>
+                                {answer.feedback || "无"}
+                              </div>
+
+                              <div className="mt-2 text-xs text-slate-400">
+                                回答时间：{answer.created_at || "未记录"}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="text-xl font-semibold text-slate-900 mb-4">作业成绩</h2>
 
