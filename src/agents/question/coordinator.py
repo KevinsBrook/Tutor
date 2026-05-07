@@ -11,8 +11,10 @@ Refactored version:
 
 from collections.abc import Callable
 from datetime import datetime
+from difflib import SequenceMatcher
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -28,6 +30,8 @@ from .quality import build_question_audit, normalize_question_schema, normalize_
 from .agents.relevance_analyzer import RelevanceAnalyzer
 from .repository import JsonQuestionRunRepository, QuestionRunRepository
 from .agents.retrieve_agent import RetrieveAgent
+
+MIXED_QUESTION_TYPE_POOL = ["choice", "multiple_choice", "true_false", "fill_blank", "written"]
 
 
 class AgentCoordinator:
@@ -206,6 +210,13 @@ class AgentCoordinator:
         """
         self.logger.section("Single Question Generation")
         self.logger.info(f"Knowledge point: {requirement.get('knowledge_point', 'N/A')}")
+        requirement = dict(requirement)
+        avoid_questions = self._collect_avoid_questions(requirement)
+        if avoid_questions:
+            requirement["additional_requirements"] = self._merge_additional_requirements(
+                requirement.get("additional_requirements"),
+                self._build_anti_repeat_context(avoid_questions),
+            )
 
         await self._send_ws_update(
             "progress", {"stage": "generating", "progress": {"status": "initializing"}}
@@ -239,29 +250,55 @@ class AgentCoordinator:
         # Check if this is mimic mode (has reference_question)
         reference_question = requirement.get("reference_question")
 
-        gen_result = await generate_agent.process(
-            requirement=requirement,
-            knowledge_context=knowledge_context,
-            reference_question=reference_question,
-        )
+        gen_result: dict[str, Any] = {}
+        question: dict[str, Any] | None = None
+        duplicate_warning = ""
+        for attempt in range(3):
+            attempt_requirement = dict(requirement)
+            attempt_requirement["avoid_questions"] = avoid_questions
+            if attempt > 0:
+                attempt_requirement["additional_requirements"] = self._merge_additional_requirements(
+                    attempt_requirement.get("additional_requirements"),
+                    "The previous candidate was too similar to a previous question. "
+                    "Use a clearly different stem, scenario, numbers, and reasoning path.",
+                )
+            gen_result = await generate_agent.process(
+                requirement=attempt_requirement,
+                knowledge_context=knowledge_context,
+                reference_question=reference_question,
+            )
 
-        if not gen_result.get("success"):
+            if not gen_result.get("success"):
+                break
+
+            raw_requested_type = str(requirement.get("question_type", "written") or "written").lower()
+            requested_type = (
+                "mixed" if raw_requested_type == "mixed" else normalize_question_type(raw_requested_type)
+            )
+            candidate = normalize_question_schema(
+                gen_result["question"],
+                requested_type=requested_type,
+                cognitive_level=requirement.get("cognitive_level", "understand"),
+            )
+            similar_to = self._find_similar_question(candidate.get("question", ""), avoid_questions)
+            if similar_to and attempt < 2:
+                self.logger.warning("Generated question is too similar to a previous stem; retrying")
+                continue
+            if similar_to:
+                duplicate_warning = "Generated question may still be similar to a previous question."
+            question = candidate
+            break
+
+        if not gen_result.get("success") or question is None:
             self.logger.error(f"Question generation failed: {gen_result.get('error')}")
             return {
                 "success": False,
                 "error": gen_result.get("error", "Generation failed"),
             }
 
-        raw_requested_type = str(requirement.get("question_type", "written") or "written").lower()
-        requested_type = (
-            "mixed" if raw_requested_type == "mixed" else normalize_question_type(raw_requested_type)
-        )
-        question = normalize_question_schema(
-            gen_result["question"],
-            requested_type=requested_type,
-            cognitive_level=requirement.get("cognitive_level", "understand"),
-        )
         question["source_refs"] = source_refs
+        if duplicate_warning:
+            question["duplicate_warning"] = duplicate_warning
 
         # Step 3: Analyze relevance
         analyzer = self._create_relevance_analyzer()
@@ -325,6 +362,14 @@ class AgentCoordinator:
             raise ValueError("num_questions must be greater than zero")
 
         self.logger.section(f"Custom Mode Generation: {num_questions} question(s)")
+        requirement = dict(requirement)
+        avoid_questions = self._collect_avoid_questions(requirement)
+        generated_stems = list(avoid_questions)
+        if avoid_questions:
+            requirement["additional_requirements"] = self._merge_additional_requirements(
+                requirement.get("additional_requirements"),
+                self._build_anti_repeat_context(avoid_questions),
+            )
 
         # Create batch directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -371,7 +416,10 @@ class AgentCoordinator:
             queries = []
             source_refs = []
 
-        resolved_type = normalize_question_type(requirement.get("question_type", "written"))
+        raw_requested_type = str(requirement.get("question_type", "written") or "written").lower()
+        resolved_type = (
+            "mixed" if raw_requested_type == "mixed" else normalize_question_type(raw_requested_type)
+        )
         cognitive_level = requirement.get("cognitive_level", "understand")
 
         # Save knowledge.json
@@ -425,14 +473,48 @@ class AgentCoordinator:
                 },
             )
 
-            # Generate question
-            gen_result = await generate_agent.process(
-                requirement=requirement,
-                knowledge_context=knowledge_context,
-                focus=focus,
-            )
+            question = None
+            gen_result: dict[str, Any] = {}
+            duplicate_warning = ""
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                attempt_requirement = dict(requirement)
+                attempt_requirement["avoid_questions"] = generated_stems[-20:]
+                if attempt > 0:
+                    attempt_requirement["additional_requirements"] = (
+                        self._merge_additional_requirements(
+                            attempt_requirement.get("additional_requirements"),
+                            "The previous candidate was too similar to an earlier question. "
+                            "Create a clearly different stem, scenario, numbers, or reasoning path.",
+                        )
+                    )
 
-            if not gen_result.get("success"):
+                gen_result = await generate_agent.process(
+                    requirement=attempt_requirement,
+                    knowledge_context=knowledge_context,
+                    focus=focus,
+                )
+
+                if not gen_result.get("success"):
+                    break
+
+                candidate = normalize_question_schema(
+                    gen_result["question"],
+                    requested_type=normalize_question_type(focus.get("type", resolved_type)),
+                    cognitive_level=cognitive_level,
+                )
+                similar_to = self._find_similar_question(candidate.get("question", ""), generated_stems)
+                if similar_to and attempt < max_attempts - 1:
+                    self.logger.warning(
+                        f"Generated question {question_id} is too similar to a previous stem; retrying"
+                    )
+                    continue
+                if similar_to:
+                    duplicate_warning = "Generated question may still be similar to a previous question."
+                question = candidate
+                break
+
+            if not gen_result.get("success") or question is None:
                 self.logger.error(f"Failed to generate question {question_id}")
                 failures.append(
                     {
@@ -445,12 +527,9 @@ class AgentCoordinator:
                 )
                 continue
 
-            question = normalize_question_schema(
-                gen_result["question"],
-                requested_type=normalize_question_type(focus.get("type", resolved_type)),
-                cognitive_level=cognitive_level,
-            )
             question["source_refs"] = source_refs
+            if duplicate_warning:
+                question["duplicate_warning"] = duplicate_warning
 
             # Analyze relevance
             await self._send_ws_update(
@@ -485,11 +564,14 @@ class AgentCoordinator:
                 "analysis": analysis,
                 "validation": validation,  # For frontend compatibility
             }
+            if duplicate_warning:
+                result["duplicate_warning"] = duplicate_warning
 
             if batch_dir:
                 self.repository.save_question_result(batch_dir, result)
 
             results.append(result)
+            generated_stems.append(str(question.get("question") or ""))
 
             await self._send_ws_update(
                 "question_update", {"question_id": question_id, "status": "done"}
@@ -551,6 +633,79 @@ class AgentCoordinator:
     # Helper Methods
     # =========================================================================
 
+    def _collect_avoid_questions(self, requirement: dict[str, Any]) -> list[str]:
+        values: list[str] = []
+        for key in ("avoid_questions", "previous_questions"):
+            raw = requirement.get(key)
+            if isinstance(raw, list):
+                values.extend(str(item).strip() for item in raw)
+            elif isinstance(raw, str):
+                values.append(raw.strip())
+        return self._dedupe_avoid_questions(values)
+
+    def _dedupe_avoid_questions(self, questions: list[str], limit: int = 30) -> list[str]:
+        seen: set[str] = set()
+        clean: list[str] = []
+        for question in questions:
+            text = re.sub(r"\s+", " ", str(question or "")).strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            clean.append(text[:500])
+        return clean[-limit:]
+
+    def _merge_additional_requirements(self, existing: Any, extra: str) -> str:
+        parts = [str(existing or "").strip(), str(extra or "").strip()]
+        return "\n\n".join(part for part in parts if part)
+
+    def _build_anti_repeat_context(self, avoid_questions: list[str]) -> str:
+        if not avoid_questions:
+            return ""
+        lines = [
+            "Anti-repeat constraint: Do not generate a question that is equivalent or highly similar "
+            "to these previous questions. Reuse the same knowledge point, but vary the stem, scenario, "
+            "numbers, option wording, and reasoning route."
+        ]
+        for idx, question in enumerate(avoid_questions[-12:], 1):
+            lines.append(f"{idx}. {question}")
+        return "\n".join(lines)
+
+    def _question_tokens(self, text: str) -> set[str]:
+        normalized = re.sub(r"\s+", "", str(text or "").lower())
+        latin_tokens = set(re.findall(r"[a-z0-9]{3,}", normalized))
+        cjk = "".join(re.findall(r"[\u4e00-\u9fff]", normalized))
+        cjk_shingles = {cjk[i : i + 2] for i in range(max(0, len(cjk) - 1))}
+        return latin_tokens | cjk_shingles
+
+    def _question_similarity(self, left: str, right: str) -> float:
+        left_text = re.sub(r"\s+", " ", str(left or "")).strip().lower()
+        right_text = re.sub(r"\s+", " ", str(right or "")).strip().lower()
+        if not left_text or not right_text:
+            return 0.0
+        ratio = SequenceMatcher(None, left_text, right_text).ratio()
+        left_tokens = self._question_tokens(left_text)
+        right_tokens = self._question_tokens(right_text)
+        if not left_tokens or not right_tokens:
+            return ratio
+        overlap = len(left_tokens & right_tokens)
+        jaccard = overlap / max(1, len(left_tokens | right_tokens))
+        containment = overlap / max(1, min(len(left_tokens), len(right_tokens)))
+        return max(ratio, jaccard, containment)
+
+    def _find_similar_question(
+        self,
+        candidate: str,
+        previous_questions: list[str],
+        threshold: float = 0.72,
+    ) -> str | None:
+        for previous in previous_questions:
+            if self._question_similarity(candidate, previous) >= threshold:
+                return previous
+        return None
+
     async def _generate_question_plan(
         self,
         requirement: dict[str, Any],
@@ -572,18 +727,22 @@ class AgentCoordinator:
         from src.services.llm.config import get_llm_config
 
         llm_config = get_llm_config()
-        requested_type = normalize_question_type(requirement.get("question_type", "written"))
+        raw_requested_type = str(requirement.get("question_type", "written") or "written").lower()
+        requested_type = (
+            "mixed" if raw_requested_type == "mixed" else normalize_question_type(raw_requested_type)
+        )
         cognitive_level = requirement.get("cognitive_level", "understand")
 
         system_prompt = (
             "You are an educational content planner. Create distinct question focuses "
-            "that test different aspects of the same topic.\n\n"
+            "that test different aspects of the same topic. If previous questions are provided, "
+            "plan focuses that avoid repeating their scenario and reasoning path.\n\n"
             "CRITICAL: Return ONLY valid JSON. Do not wrap in markdown code blocks.\n"
             'Output JSON with key "focuses" containing an array of objects, each with:\n'
             '- "id": string like "q_1", "q_2"\n'
             '- "focus": string describing what aspect to test\n'
             '- "type": one of '
-            '["choice","written","true_false","multiple_choice","fill_blank","matching","term_definition","ordering"]\n'
+            '["choice","written","true_false","multiple_choice","fill_blank"]\n'
             '- "cognitive_level": one of ["remember","understand","apply","analyze","evaluate","create"]'
         )
 
@@ -592,6 +751,9 @@ class AgentCoordinator:
             knowledge_context[:4000] if len(knowledge_context) > 4000 else knowledge_context
         )
         truncation_suffix = "...[truncated]" if len(knowledge_context) > 4000 else ""
+        anti_repeat_context = self._build_anti_repeat_context(
+            self._collect_avoid_questions(requirement)
+        )
 
         user_prompt = (
             f"Topic: {requirement.get('knowledge_point', '')}\n"
@@ -600,6 +762,7 @@ class AgentCoordinator:
             f"Bloom Level: {cognitive_level}\n"
             f"Number: {num_questions}\n\n"
             f"Knowledge:\n{truncated_knowledge}{truncation_suffix}\n\n"
+            f"{anti_repeat_context}\n\n"
             f"Generate exactly {num_questions} distinct focuses in JSON."
         )
 
@@ -631,9 +794,10 @@ class AgentCoordinator:
         normalized_type_pool = [
             normalize_question_type(x) for x in requested_types if isinstance(x, str)
         ]
+        normalized_type_pool = list(dict.fromkeys(normalized_type_pool))
         if not normalized_type_pool:
             if requested_type == "mixed":
-                normalized_type_pool = ["choice", "written", "true_false", "fill_blank"]
+                normalized_type_pool = MIXED_QUESTION_TYPE_POOL
             else:
                 normalized_type_pool = [requested_type]
 
@@ -648,12 +812,17 @@ class AgentCoordinator:
                         "cognitive_level": cognitive_level,
                     }
                 )
-        else:
-            for idx, focus in enumerate(focuses):
-                focus["type"] = normalize_question_type(
-                    focus.get("type"), fallback=normalized_type_pool[idx % len(normalized_type_pool)]
-                )
-                focus["cognitive_level"] = focus.get("cognitive_level", cognitive_level)
+
+        for idx, focus in enumerate(focuses):
+            fallback_type = normalized_type_pool[idx % len(normalized_type_pool)]
+            if requested_type == "mixed":
+                focus["type"] = fallback_type
+            else:
+                # For explicit single-type batches, the requested type is the
+                # contract. Do not let the planning LLM quietly turn
+                # multiple_choice into choice.
+                focus["type"] = requested_type
+            focus["cognitive_level"] = focus.get("cognitive_level", cognitive_level)
 
         return {
             "knowledge_point": requirement.get("knowledge_point", ""),

@@ -169,11 +169,27 @@ class RelevanceAnalyzer(BaseAgent):
 
         return {
             "relevance": relevance,
-            "kb_coverage": result.get("kb_coverage", ""),
-            "extension_points": result.get("extension_points", "")
+            "kb_coverage": self._stringify_analysis_field(result.get("kb_coverage", "")),
+            "extension_points": self._stringify_analysis_field(result.get("extension_points", ""))
             if relevance == "partial"
             else "",
         }
+
+    def _stringify_analysis_field(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "; ".join(self._stringify_analysis_field(item) for item in value if item is not None)
+        if isinstance(value, dict):
+            parts = []
+            for key, item in value.items():
+                item_text = self._stringify_analysis_field(item)
+                if item_text:
+                    parts.append(f"{key}: {item_text}")
+            return "; ".join(parts)
+        return str(value)
 
     def _clean_json_string(self, json_str: str) -> str:
         """

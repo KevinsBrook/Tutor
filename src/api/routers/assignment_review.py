@@ -21,10 +21,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from src.agents.question import AgentCoordinator
 from src.api.utils.assignment_review_store import get_assignment_review_store
 from src.core.database import get_db
 from src.core.models import Course, CourseChapter, KnowledgePoint, Student, Teacher, User
 from src.services.mastery import apply_mastery_event
+from src.services.settings.interface_settings import get_ui_language
 from src.utils.json_parser import parse_json_response
 from src.utils.document_validator import DocumentValidator
 
@@ -151,6 +153,13 @@ class CreateWrongbookItemRequest(BaseModel):
     knowledge_point_id: int | None = None
     suggestion: str = ""
     source_submission_id: str = ""
+    question_text: str = ""
+    student_answer: str = ""
+    correct_answer: str = ""
+    explanation: str = ""
+    question_type: str = ""
+    score: float | None = None
+    max_score: float | None = None
 
 
 class ConfirmKnowledgeCandidate(BaseModel):
@@ -1178,6 +1187,79 @@ def _build_practice(strategy: str, wrong_item: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _wrongbook_strategy_requirement(strategy: str, wrong_item: dict[str, Any]) -> dict[str, Any]:
+    kp = str(wrong_item.get("knowledge_point") or "相关知识点").strip()
+    original_question = str(wrong_item.get("question_text") or "").strip()
+    student_answer = str(wrong_item.get("student_answer") or "").strip()
+    correct_answer = str(wrong_item.get("correct_answer") or "").strip()
+    explanation = str(wrong_item.get("explanation") or "").strip()
+    feedback = str(wrong_item.get("feedback") or "").strip()
+    original_type = str(wrong_item.get("question_type") or "choice").strip().lower()
+    if original_type not in {"choice", "multiple_choice", "true_false", "fill_blank", "written"}:
+        original_type = "choice"
+    avoid_questions = [original_question] if original_question else []
+    for practice in wrong_item.get("practice_history", []):
+        if not isinstance(practice, dict):
+            continue
+        generated = practice.get("question")
+        if isinstance(generated, dict):
+            stem = str(generated.get("question") or "").strip()
+            if stem:
+                avoid_questions.append(stem)
+
+    difficulty_map = {
+        "same_point": "medium",
+        "variant": "medium",
+        "harder": "hard",
+        "easier": "easy",
+    }
+    instruction_map = {
+        "same_point": "Generate a fresh question that tests the same knowledge point. Do not copy the original wording.",
+        "variant": "Generate a variant question with a different scenario, values, or reasoning path while preserving the same core knowledge.",
+        "harder": "Generate a more challenging question that requires deeper reasoning than the original.",
+        "easier": "Generate a simpler consolidation question that checks the prerequisite idea clearly.",
+    }
+    context_parts = [
+        instruction_map.get(strategy, instruction_map["same_point"]),
+        f"Original wrong question: {original_question}",
+        f"Student wrong answer: {student_answer}",
+        f"Reference answer: {correct_answer}",
+        f"Original explanation: {explanation}",
+        f"Feedback: {feedback}",
+        "The new question must include a correct_answer and an explanation aligned with the final options.",
+    ]
+    return {
+        "knowledge_point": kp,
+        "difficulty": difficulty_map.get(strategy, "medium"),
+        "question_type": original_type,
+        "cognitive_level": "analyze" if strategy == "harder" else "apply",
+        "additional_requirements": "\n".join(x for x in context_parts if x),
+        "avoid_questions": avoid_questions[-12:],
+    }
+
+
+async def _build_generated_practice(strategy: str, wrong_item: dict[str, Any]) -> dict[str, Any]:
+    practice = _build_practice(strategy, wrong_item)
+    requirement = _wrongbook_strategy_requirement(strategy, wrong_item)
+    output_dir = Path(__file__).parent.parent.parent.parent / "data" / "user" / "question" / "wrongbook"
+    coordinator = AgentCoordinator(
+        kb_name=None,
+        output_dir=str(output_dir),
+        language=get_ui_language(default="zh"),
+        max_rounds=10,
+    )
+    result = await coordinator.generate_question(requirement)
+    if not result.get("success"):
+        practice["generation_error"] = result.get("message") or result.get("error") or "generation_failed"
+        return practice
+
+    practice["question"] = result.get("question", {})
+    practice["validation"] = result.get("validation", {})
+    practice["requirement"] = requirement
+    practice["token_stats"] = coordinator.token_stats
+    return practice
+
+
 @router.post("/teacher/rubric-draft", response_model=RubricDraftResponse)
 async def generate_rubric_draft(request: RubricDraftRequest, db: Session = Depends(get_db)):
     task_points = _split_task_points(
@@ -1550,7 +1632,7 @@ async def generate_wrongbook_practice(item_id: str, request: WrongbookPracticeRe
     if not target:
         raise HTTPException(status_code=404, detail="Wrongbook item not found")
 
-    practice = _build_practice(request.strategy, target)
+    practice = await _build_generated_practice(request.strategy, target)
     updated = store.append_wrongbook_practice(
         student_username=request.student_username,
         item_id=item_id,
@@ -1608,5 +1690,12 @@ async def create_custom_wrongbook_item(request: CreateWrongbookItemRequest):
         knowledge_point_id=request.knowledge_point_id,
         suggestion=request.suggestion,
         source_submission_id=request.source_submission_id,
+        question_text=request.question_text,
+        student_answer=request.student_answer,
+        correct_answer=request.correct_answer,
+        explanation=request.explanation,
+        question_type=request.question_type,
+        score=request.score,
+        max_score=request.max_score,
     )
     return {"success": True, "item": item}

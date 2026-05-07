@@ -15,9 +15,6 @@ SUPPORTED_QUESTION_TYPES = {
     "true_false",
     "multiple_choice",
     "fill_blank",
-    "matching",
-    "term_definition",
-    "ordering",
 }
 
 BLOOM_LEVELS = {
@@ -58,9 +55,6 @@ def normalize_question_type(raw_type: str | None, fallback: str = "written") -> 
         "multichoice": "multiple_choice",
         "blank": "fill_blank",
         "fill_in_blank": "fill_blank",
-        "pairing": "matching",
-        "keyword_definition": "term_definition",
-        "sort_steps": "ordering",
     }
     if value in aliases:
         value = aliases[value]
@@ -75,7 +69,10 @@ def normalize_question_schema(
     cognitive_level: str,
 ) -> dict[str, Any]:
     q = dict(question)
-    qtype = normalize_question_type(q.get("question_type"), fallback=requested_type)
+    # The caller's requested type is the contract with the UI/evaluator.
+    # LLMs often drift from "multiple_choice" back to "choice"; preserving
+    # that drift makes a requested multi-select batch become single-select.
+    qtype = normalize_question_type(requested_type)
     q["question_type"] = qtype
     q["question"] = str(q.get("question", "")).strip()
     q["correct_answer"] = q.get("correct_answer", "")
@@ -111,34 +108,34 @@ def normalize_question_schema(
             blanks = [q["correct_answer"]]
         q["blanks"] = [str(x).strip() for x in blanks if str(x).strip()]
 
-    if qtype in {"matching", "term_definition"}:
-        pairs = q.get("pairs")
-        if not isinstance(pairs, list):
-            pairs = []
-        normalized_pairs = []
-        for p in pairs:
-            if isinstance(p, dict) and p.get("left") and p.get("right"):
-                normalized_pairs.append({"left": str(p["left"]).strip(), "right": str(p["right"]).strip()})
-        q["pairs"] = normalized_pairs
-
-    if qtype == "ordering":
-        steps = q.get("steps")
-        if not isinstance(steps, list):
-            steps = []
-        q["steps"] = [str(x).strip() for x in steps if str(x).strip()]
-        if not q["steps"] and isinstance(q.get("correct_answer"), str):
-            q["steps"] = [x.strip() for x in q["correct_answer"].split("->") if x.strip()]
-
     return q
+
+
+def _stringify_audit_field(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "; ".join(_stringify_audit_field(item) for item in value if item is not None)
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            item_text = _stringify_audit_field(item)
+            if item_text:
+                parts.append(f"{key}: {item_text}")
+        return "; ".join(parts)
+    return str(value)
 
 
 def build_question_audit(
     question: dict[str, Any],
     requested_difficulty: str,
     relevance: str,
-    kb_coverage: str,
+    kb_coverage: Any,
     source_refs: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    kb_coverage_text = _stringify_audit_field(kb_coverage)
     qtype = question.get("question_type", "written")
     options = question.get("options") if isinstance(question.get("options"), dict) else {}
     option_values = [str(v).strip() for v in options.values()]
@@ -162,7 +159,7 @@ def build_question_audit(
     out_of_scope_risk = "low"
     if relevance == "partial":
         out_of_scope_risk = "medium"
-    if not kb_coverage or "无" in kb_coverage.lower():
+    if not kb_coverage_text or "无" in kb_coverage_text.lower():
         out_of_scope_risk = "high"
 
     ambiguous_patterns = ["可能", "大概", "也许", "不确定", "无法判断", "待确认"]
@@ -176,7 +173,7 @@ def build_question_audit(
         "requested_difficulty": requested_difficulty,
         "difficulty_alignment": "estimated_match",
         "relevance": relevance,
-        "kb_coverage": kb_coverage,
+        "kb_coverage": kb_coverage_text,
         "answer_uniqueness": answer_uniqueness,
         "distractor_quality": distractor_quality,
         "clarity": clarity,

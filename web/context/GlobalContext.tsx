@@ -962,6 +962,23 @@ export function GlobalProvider({ children }: { children: React.ReactNode }) {
   ) => {
     if (questionWs.current) questionWs.current.close();
 
+    const avoidQuestions = questionState.results
+      .filter((item) => {
+        const question = item?.question || {};
+        const sameTopic =
+          !question.knowledge_point ||
+          !topic ||
+          String(question.knowledge_point).trim() === topic.trim();
+        const sameType =
+          !question.question_type ||
+          !type ||
+          String(question.question_type).trim() === type.trim();
+        return sameTopic && sameType && question.question;
+      })
+      .map((item) => String(item.question.question).trim())
+      .filter(Boolean)
+      .slice(-20);
+
     setQuestionState((prev) => ({
       ...prev,
       step: "generating",
@@ -1008,7 +1025,15 @@ export function GlobalProvider({ children }: { children: React.ReactNode }) {
             difficulty: diff,
             question_type: type,
             cognitive_level: bloomLevel,
-            additional_requirements: "Ensure clarity and academic rigor.",
+            avoid_questions: avoidQuestions,
+            additional_requirements: [
+              "Ensure clarity and academic rigor.",
+              avoidQuestions.length
+                ? "Avoid repeating or lightly rewording previous questions on this knowledge point. Use a different stem, scenario, numbers, options, and reasoning path."
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n"),
           },
           count: count,
           kb_name: kb,
