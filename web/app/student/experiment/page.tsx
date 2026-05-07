@@ -246,7 +246,7 @@ export default function StudentExperimentPage() {
         },
         body: JSON.stringify({
           submission_id: submissionId,
-          question_count: Math.floor(Math.random() * 3) + 4, // 4~6
+          question_count: Math.floor(Math.random() * 2) + 4, // 4~6
         }),
       });
 
