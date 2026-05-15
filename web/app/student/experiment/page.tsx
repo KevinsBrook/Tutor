@@ -43,8 +43,15 @@ type AnswerResult = {
   grading_reason: string;
   created_at: string;
 };
+type PauseStat = {
+  pauseCount: number;
+  longestPauseMs: number;
+  answerStartedAt: number | null;
+  lastSpeechAt: number | null;
+};
 
 export default function StudentExperimentPage() {
+  const PAUSE_THRESHOLD_MS = 2000;
   const router = useRouter();
   const { session, isReady } = useAuth();
 
@@ -58,7 +65,7 @@ export default function StudentExperimentPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [generatingForId, setGeneratingForId] = useState<number | null>(null);
   const [submittingQuestionId, setSubmittingQuestionId] = useState<number | null>(null);
-
+  
   const [uploadForm, setUploadForm] = useState({
     assignment_no: "",
     experiment_title: "",
@@ -74,9 +81,7 @@ export default function StudentExperimentPage() {
   const [deadlineAt, setDeadlineAt] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
 
-  const [pauseStats, setPauseStats] = useState<
-    Record<number, { pauseCount: number; longestPauseMs: number; answerStartedAt: number }>
-  >({});
+  const [pauseStats, setPauseStats] = useState<Record<number, PauseStat>>({});
 
   const recognitionRef = useRef<any>(null);
   const shouldKeepRecordingRef = useRef(false); 
@@ -343,6 +348,22 @@ export default function StudentExperimentPage() {
     recognitionRef.current = recognition;
     shouldKeepRecordingRef.current = true;
     setRecordingQuestionId(questionId);
+    // 开始语音输入时初始化本题的停顿统计。
+    // 如果学生停止后又继续回答，则保留原来的停顿次数和开始时间。
+    const startTime = Date.now();
+    setPauseStats((prev) => {
+      const old = prev[questionId];
+
+      return {
+        ...prev,
+        [questionId]: {
+          pauseCount: old?.pauseCount ?? 0,
+          longestPauseMs: old?.longestPauseMs ?? 0,
+          answerStartedAt: old?.answerStartedAt ?? startTime,
+          lastSpeechAt: old?.lastSpeechAt ?? startTime,
+        },
+      };
+    });
   
     // 保留已有回答内容，避免自动重启后把前面的识别文本清空
     let finalTranscript = answerInputs[questionId] || "";
@@ -375,12 +396,40 @@ export default function StudentExperimentPage() {
       }
     
       // 只把最终结果写入正式回答框
+      // 只把最终结果写入正式回答框，同时根据两次最终识别结果之间的时间差统计停顿。
       if (hasNewFinal) {
+        const now = Date.now();
+
+        setPauseStats((prev) => {
+          const old = prev[questionId] || {
+            pauseCount: 0,
+            longestPauseMs: 0,
+            answerStartedAt: now,
+            lastSpeechAt: now,
+          };
+
+          const lastSpeechAt = old.lastSpeechAt ?? now;
+          const gap = now - lastSpeechAt;
+          const isPause = gap > PAUSE_THRESHOLD_MS;
+
+          return {
+            ...prev,
+            [questionId]: {
+              ...old,
+              pauseCount: old.pauseCount + (isPause ? 1 : 0),
+              longestPauseMs: isPause
+                ? Math.max(old.longestPauseMs, gap)
+                : old.longestPauseMs,
+              lastSpeechAt: now,
+            },
+          };
+        });
+
         setAnswerInputs((prev) => {
           if (prev[questionId] === finalTranscript) return prev;
           return {
             ...prev,
-            [questionId]: finalTranscript,
+           [questionId]: finalTranscript,
           };
         });
       }
@@ -751,6 +800,17 @@ export default function StudentExperimentPage() {
                           {submittingQuestionId === q.id ? "评分中..." : "提交回答并评分"}
                         </button>
 
+                      </div>
+                      <div className="mt-2 text-sm text-slate-500">
+                        停顿次数：{pauseStats[q.id]?.pauseCount || 0}；
+                        最长停顿：
+                        {Math.round((pauseStats[q.id]?.longestPauseMs || 0) / 1000)}
+                        秒
+                        {interimInputs[q.id] && (
+                          <span className="ml-2 text-slate-400">
+                            正在识别：{interimInputs[q.id]}
+                          </span>
+                        )}
                       </div>
 
                       {result && (
