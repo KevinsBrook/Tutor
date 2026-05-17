@@ -187,8 +187,29 @@ class KnowledgePoint(Base):
     chapter = relationship("CourseChapter", back_populates="knowledge_points")
     source_material = relationship("CourseMaterial", back_populates="knowledge_points")
     creator_teacher = relationship("Teacher", back_populates="created_knowledge_points")
+    aliases = relationship("KnowledgePointAlias", back_populates="knowledge_point")
     mastery_records = relationship("StudentKnowledgeMastery", back_populates="knowledge_point")
     mastery_events = relationship("KnowledgeMasteryEvent", back_populates="knowledge_point")
+
+
+class KnowledgePointAlias(Base):
+    __tablename__ = "knowledge_point_aliases"
+    __table_args__ = (
+        UniqueConstraint("course_id", "chapter_id", "alias_name", name="uq_course_chapter_kp_alias"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    knowledge_point_id = Column(Integer, ForeignKey("knowledge_points.id"), nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    chapter_id = Column(Integer, ForeignKey("course_chapters.id"), nullable=True, index=True)
+    alias_name = Column(String(200), nullable=False, index=True)
+    alias_language = Column(String(20), default="unknown", nullable=False)
+    confidence = Column(Float, default=0.0, nullable=False)
+    source = Column(String(40), default="rule", nullable=False, index=True)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    knowledge_point = relationship("KnowledgePoint", back_populates="aliases")
 
 
 class StudentKnowledgeMastery(Base):

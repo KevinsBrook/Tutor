@@ -30,6 +30,14 @@ from pydantic import BaseModel
 
 from src.api.utils.progress_broadcaster import ProgressBroadcaster
 from src.api.utils.task_id_manager import TaskIDManager
+from src.core.database import SessionLocal
+from src.core.models import (
+    Course,
+    CourseMaterial,
+    KnowledgeMasteryEvent,
+    KnowledgePoint,
+    StudentKnowledgeMastery,
+)
 from src.knowledge.add_documents import DocumentAdder
 from src.knowledge.initializer import KnowledgeBaseInitializer
 from src.knowledge.manager import KnowledgeBaseManager
@@ -217,6 +225,175 @@ def _infer_node_type(label: str) -> str:
     return "entity"
 
 
+_GRAPH_ENGLISH_TO_CHINESE_ALIASES = {
+    "accuracy": "准确率",
+    "activation function": "激活函数",
+    "adam": "Adam优化器",
+    "attention mechanism": "注意力机制",
+    "backpropagation": "反向传播",
+    "bayes theorem": "贝叶斯定理",
+    "bayes formula": "贝叶斯公式",
+    "batch normalization": "批归一化",
+    "binary classification": "二分类",
+    "classification": "分类",
+    "clustering": "聚类",
+    "conditional probability": "条件概率",
+    "confusion matrix": "混淆矩阵",
+    "convolution": "卷积",
+    "convolutional neural network": "卷积神经网络",
+    "cnn": "卷积神经网络",
+    "cross entropy": "交叉熵",
+    "decision tree": "决策树",
+    "deep learning": "深度学习",
+    "dropout": "Dropout",
+    "embedding": "嵌入",
+    "epoch": "训练轮次",
+    "f1 score": "F1分数",
+    "gradient descent": "梯度下降",
+    "k means": "K均值",
+    "linear regression": "线性回归",
+    "logistic regression": "逻辑回归",
+    "loss function": "损失函数",
+    "machine learning": "机器学习",
+    "mean squared error": "均方误差",
+    "mse": "均方误差",
+    "neural network": "神经网络",
+    "overfitting": "过拟合",
+    "precision": "精确率",
+    "recall": "召回率",
+    "relu": "ReLU",
+    "regularization": "正则化",
+    "reinforcement learning": "强化学习",
+    "rnn": "循环神经网络",
+    "recurrent neural network": "循环神经网络",
+    "softmax": "Softmax",
+    "supervised learning": "监督学习",
+    "support vector machine": "支持向量机",
+    "svm": "支持向量机",
+    "transformer": "Transformer",
+    "underfitting": "欠拟合",
+    "unsupervised learning": "无监督学习",
+    "ip address": "IP地址",
+    "mac address": "MAC地址",
+    "subnet mask": "子网掩码",
+    "default gateway": "默认网关",
+    "network layer": "网络层",
+    "data link layer": "数据链路层",
+    "transport layer": "传输层",
+    "application layer": "应用层",
+    "osi model": "OSI模型",
+    "tcp protocol": "TCP协议",
+    "udp protocol": "UDP协议",
+    "ip protocol": "IP协议",
+    "arp protocol": "ARP协议",
+    "icmp protocol": "ICMP协议",
+    "dhcp protocol": "DHCP协议",
+    "dns protocol": "DNS协议",
+    "http protocol": "HTTP协议",
+    "https protocol": "HTTPS协议",
+}
+_GRAPH_CHINESE_TO_ENGLISH_ALIASES = {
+    chinese: english for english, chinese in _GRAPH_ENGLISH_TO_CHINESE_ALIASES.items()
+}
+_GRAPH_CHINESE_SUFFIX_TO_ENGLISH = {
+    "地址": "address",
+    "协议": "protocol",
+    "模型": "model",
+    "层": "layer",
+    "网关": "gateway",
+    "掩码": "mask",
+    "子网": "subnet",
+    "端口": "port",
+    "路由器": "router",
+    "交换机": "switch",
+}
+
+
+def _contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(text or "")))
+
+
+def _english_alias_key(text: str) -> str:
+    normalized = re.sub(r"[^0-9a-z]+", " ", str(text or "").lower()).strip()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _normalize_graph_key(text: str) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(text or "").lower())
+
+
+def _mixed_cjk_english_alias_keys(text: str) -> set[str]:
+    keys: set[str] = set()
+    raw = str(text or "").strip()
+    for ascii_part, cjk_part in re.findall(r"([A-Za-z][A-Za-z0-9+.-]*)\s*([\u4e00-\u9fff]{1,8})", raw):
+        prefix = ascii_part.lower()
+        suffix = _GRAPH_CHINESE_SUFFIX_TO_ENGLISH.get(cjk_part)
+        if suffix:
+            keys.add(f"{prefix} {suffix}")
+            keys.add(f"{prefix}{suffix}")
+    return keys
+
+
+def _graph_alias_keys(label: str) -> set[str]:
+    text = str(label or "").strip()
+    keys = {_normalize_graph_key(text)}
+    english_key = _english_alias_key(text)
+    if english_key:
+        keys.add(english_key)
+        keys.add(english_key.replace(" ", ""))
+        chinese_alias = _GRAPH_ENGLISH_TO_CHINESE_ALIASES.get(english_key)
+        if chinese_alias:
+            keys.add(_normalize_graph_key(chinese_alias))
+    if text in _GRAPH_CHINESE_TO_ENGLISH_ALIASES:
+        english_alias = _GRAPH_CHINESE_TO_ENGLISH_ALIASES[text]
+        keys.add(english_alias)
+        keys.add(english_alias.replace(" ", ""))
+    for mixed_key in _mixed_cjk_english_alias_keys(text):
+        keys.add(mixed_key)
+        keys.add(mixed_key.replace(" ", ""))
+        chinese_alias = _GRAPH_ENGLISH_TO_CHINESE_ALIASES.get(mixed_key)
+        if chinese_alias:
+            keys.add(_normalize_graph_key(chinese_alias))
+    canonical = _canonical_graph_label(text)
+    if canonical and canonical != text:
+        keys.add(_normalize_graph_key(canonical))
+    return {key for key in keys if key}
+
+
+def _canonical_graph_label(label: str) -> str:
+    text = str(label or "").strip()
+    if not text:
+        return ""
+    english_key = _english_alias_key(text)
+    if english_key in _GRAPH_ENGLISH_TO_CHINESE_ALIASES:
+        return _GRAPH_ENGLISH_TO_CHINESE_ALIASES[english_key]
+    return text
+
+
+def _canonical_graph_key(label: str) -> str:
+    canonical = _canonical_graph_label(label)
+    if canonical in _GRAPH_CHINESE_TO_ENGLISH_ALIASES:
+        return _english_alias_key(_GRAPH_CHINESE_TO_ENGLISH_ALIASES[canonical])
+    english_key = _english_alias_key(canonical)
+    if english_key in _GRAPH_ENGLISH_TO_CHINESE_ALIASES:
+        return english_key
+    return _normalize_graph_key(canonical)
+
+
+def _prefer_graph_label(current: str, incoming: str) -> str:
+    current_text = str(current or "").strip()
+    incoming_text = str(incoming or "").strip()
+    if not current_text:
+        return incoming_text
+    if not incoming_text:
+        return current_text
+    if _contains_cjk(incoming_text) and not _contains_cjk(current_text):
+        return incoming_text
+    if len(incoming_text) < len(current_text) and _contains_cjk(incoming_text) == _contains_cjk(current_text):
+        return incoming_text
+    return current_text
+
+
 def _is_probably_noisy_label(label: str) -> bool:
     """Heuristic filter for low-value nodes frequently produced by OCR/LLM extraction."""
     text = label.strip()
@@ -251,43 +428,61 @@ def _build_graph_payload(
 ) -> dict[str, Any]:
     """Convert raw entity/relation stores to frontend-friendly graph payload."""
     node_map: dict[str, dict[str, Any]] = {}
+    canonical_id_by_key: dict[str, str] = {}
     edge_list: list[dict[str, Any]] = []
     edge_seen: set[tuple[str, str, str]] = set()
 
-    def upsert_node(node_id: str, label: str | None = None, node_type: str | None = None):
-        nid = node_id.strip()
-        if not nid:
-            return
-        node_label = (label or nid).strip()
+    def upsert_node(node_id: str, label: str | None = None, node_type: str | None = None) -> str | None:
+        raw_id = node_id.strip()
+        if not raw_id:
+            return None
+        node_label = (label or raw_id).strip()
         if filter_noise and _is_probably_noisy_label(node_label):
-            return
-        inferred_type = node_type or _infer_node_type(node_label)
+            return None
+        alias_keys = _graph_alias_keys(node_label or raw_id)
+        canonical_key = next(iter(alias_keys), _canonical_graph_key(node_label or raw_id))
+        nid = next((canonical_id_by_key[key] for key in alias_keys if key in canonical_id_by_key), None)
+        if not nid:
+            canonical_label = _canonical_graph_label(node_label or raw_id)
+            nid = canonical_label or raw_id
+            while nid in node_map and _canonical_graph_key(node_map[nid].get("label", nid)) != canonical_key:
+                nid = f"{canonical_label or raw_id}_{len(node_map) + 1}"
+            for key in alias_keys:
+                canonical_id_by_key[key] = nid
+        display_label = _canonical_graph_label(node_label) or node_label
+        inferred_type = node_type or _infer_node_type(display_label)
         if nid not in node_map:
             node_map[nid] = {
                 "id": nid,
-                "label": node_label,
+                "label": display_label,
                 "type": inferred_type,
+                "aliases": [raw_id] if raw_id != nid else [],
             }
         else:
-            if node_label and node_map[nid].get("label") == nid:
-                node_map[nid]["label"] = node_label
+            if node_label:
+                node_map[nid]["label"] = _prefer_graph_label(
+                    node_map[nid].get("label", nid),
+                    _canonical_graph_label(node_label) or node_label,
+                )
             if inferred_type and node_map[nid].get("type") == "entity":
                 node_map[nid]["type"] = inferred_type
+            aliases = node_map[nid].setdefault("aliases", [])
+            if raw_id != nid and raw_id not in aliases:
+                aliases.append(raw_id)
+        return nid
 
     def append_edge(source: str, target: str, relation_label: str, weight: float = 1.0):
-        src = source.strip()
-        tgt = target.strip()
+        src = upsert_node(source)
+        tgt = upsert_node(target)
         if not src or not tgt:
+            return
+        if src == tgt:
             return
         dedupe_key = (src, tgt, relation_label)
         if dedupe_key in edge_seen:
             return
         edge_seen.add(dedupe_key)
 
-        upsert_node(src)
-        upsert_node(tgt)
-        if src not in node_map or tgt not in node_map:
-            return
         edge_list.append(
             {
                 "id": f"e_{len(edge_list)}",
@@ -328,9 +523,11 @@ def _build_graph_payload(
         label = _pick_first_str(payload, ["label", "entity_name", "name", "entity"])
         node_type = _pick_first_str(payload, ["entity_type", "type", "category"])
         description = _pick_first_str(payload, ["description", "summary", "content"])
-        upsert_node(entity_id, label=label, node_type=node_type)
-        if description:
-            node_map[entity_id]["description"] = description
+        canonical_node_id = upsert_node(entity_id, label=label, node_type=node_type)
+        if description and canonical_node_id and canonical_node_id in node_map:
+            existing_description = node_map[canonical_node_id].get("description")
+            if not existing_description or len(description) > len(str(existing_description)):
+                node_map[canonical_node_id]["description"] = description
 
     # Parse relations (supports both flat relation stores and LightRAG's doc->relation_pairs format)
     if isinstance(relations_raw, dict):
@@ -509,6 +706,7 @@ def _estimate_node_explanation_confidence(explanation: str, source: str) -> int:
 
 
 _kb_base_dir = _project_root / "data" / "knowledge_bases"
+_course_material_root = _project_root / "data" / "user" / "course_materials"
 
 # Lazy initialization
 kb_manager = None
@@ -520,6 +718,58 @@ def get_kb_manager():
     if kb_manager is None:
         kb_manager = KnowledgeBaseManager(base_dir=str(_kb_base_dir))
     return kb_manager
+
+
+def _delete_course_material_file(file_path: str | None) -> None:
+    if not file_path:
+        return
+    try:
+        target = Path(file_path).resolve()
+        root = _course_material_root.resolve()
+        if root not in target.parents and target != root:
+            return
+        if target.is_file():
+            target.unlink()
+    except Exception:
+        return
+
+
+def _delete_course_material_records_for_kb(kb_name: str) -> int:
+    db = SessionLocal()
+    try:
+        materials = db.query(CourseMaterial).filter(CourseMaterial.kb_name == kb_name).all()
+        if not materials:
+            return 0
+        material_ids = [material.id for material in materials]
+        file_paths = [material.file_path for material in materials]
+        point_ids = [
+            point_id
+            for (point_id,) in db.query(KnowledgePoint.id)
+            .filter(KnowledgePoint.source_material_id.in_(material_ids))
+            .all()
+        ]
+        if point_ids:
+            db.query(StudentKnowledgeMastery).filter(
+                StudentKnowledgeMastery.knowledge_point_id.in_(point_ids),
+            ).delete(synchronize_session=False)
+            db.query(KnowledgeMasteryEvent).filter(
+                KnowledgeMasteryEvent.knowledge_point_id.in_(point_ids),
+            ).delete(synchronize_session=False)
+            db.query(KnowledgePoint).filter(KnowledgePoint.id.in_(point_ids)).delete(
+                synchronize_session=False,
+            )
+        db.query(CourseMaterial).filter(CourseMaterial.id.in_(material_ids)).delete(
+            synchronize_session=False,
+        )
+        db.commit()
+        for file_path in file_paths:
+            _delete_course_material_file(file_path)
+        return len(material_ids)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 class KnowledgeBaseInfo(BaseModel):
@@ -933,6 +1183,83 @@ async def list_knowledge_bases():
         error_msg = f"Error listing knowledge bases: {e}"
         logger.error(f"{error_msg}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to list knowledge bases: {e!s}")
+
+
+@router.get("/course-tree")
+async def list_course_material_knowledge_bases():
+    """Return course-scoped KBs grouped by course and chapter for RAG management."""
+    db = SessionLocal()
+    try:
+        manager = get_kb_manager()
+        kb_names = set(manager.list_knowledge_bases())
+        courses = db.query(Course).order_by(Course.created_at.desc()).all()
+        course_payloads = []
+
+        for course in courses:
+            chapter_map = {
+                chapter.id: {
+                    "id": chapter.id,
+                    "title": chapter.title,
+                    "order_index": chapter.order_index,
+                    "knowledge_bases": [],
+                }
+                for chapter in sorted(course.chapters or [], key=lambda item: item.order_index)
+            }
+            course_public = {
+                "id": None,
+                "title": "课程公共资料",
+                "order_index": 0,
+                "knowledge_bases": [],
+            }
+            materials = sorted(
+                course.materials or [],
+                key=lambda item: (item.chapter.order_index if item.chapter else 0, item.created_at),
+            )
+            for material in materials:
+                if not material.kb_name:
+                    continue
+                info = None
+                metadata = {}
+                if material.kb_name in kb_names:
+                    try:
+                        info = manager.get_info(material.kb_name)
+                        metadata = manager.get_metadata(material.kb_name)
+                    except Exception:
+                        info = None
+                kb_payload = {
+                    "name": material.kb_name,
+                    "display_name": material.title or material.original_filename or material.kb_name,
+                    "material_id": material.id,
+                    "material_title": material.title,
+                    "original_filename": material.original_filename,
+                    "source_type": material.source_type,
+                    "parse_status": material.parse_status,
+                    "rag_provider": material.rag_provider or metadata.get("rag_provider"),
+                    "statistics": info.get("statistics", {}) if info else {},
+                    "is_default": bool(info.get("is_default")) if info else False,
+                }
+                target = chapter_map.get(material.chapter_id) if material.chapter_id else course_public
+                if target is None:
+                    target = course_public
+                target["knowledge_bases"].append(kb_payload)
+
+            chapters = [course_public] if course_public["knowledge_bases"] else []
+            chapters.extend(
+                chapter for chapter in chapter_map.values() if chapter["knowledge_bases"]
+            )
+            if chapters:
+                course_payloads.append(
+                    {
+                        "id": course.id,
+                        "name": course.name,
+                        "description": course.description or "",
+                        "chapters": chapters,
+                    }
+                )
+
+        return {"courses": course_payloads, "total": len(course_payloads)}
+    finally:
+        db.close()
 
 
 @router.get("/{kb_name}")
@@ -1403,12 +1730,18 @@ async def generate_node_explanation_cache(
 async def delete_knowledge_base(kb_name: str):
     """Delete a knowledge base."""
     try:
+        removed_course_materials = _delete_course_material_records_for_kb(kb_name)
         manager = get_kb_manager()
         success = manager.delete_knowledge_base(kb_name, confirm=True)
         if not success:
             raise HTTPException(status_code=400, detail="Failed to delete knowledge base")
-        logger.info(f"KB '{kb_name}' deleted")
-        return {"message": f"Knowledge base '{kb_name}' deleted successfully"}
+        logger.info(
+            f"KB '{kb_name}' deleted; removed {removed_course_materials} linked course materials"
+        )
+        return {
+            "message": f"Knowledge base '{kb_name}' deleted successfully",
+            "removed_course_materials": removed_course_materials,
+        }
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
     except Exception as e:

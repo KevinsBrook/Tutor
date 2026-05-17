@@ -148,10 +148,12 @@ MODEL_OVERRIDES: dict[str, dict[str, Any]] = {
     "qwen": {
         # Qwen models may have thinking tags
         "has_thinking_tags": True,
+        "supports_response_format": False,
     },
     "qwq": {
         # QwQ is Qwen's reasoning model with thinking tags
         "has_thinking_tags": True,
+        "supports_response_format": False,
     },
     # Claude models through OpenRouter or other providers
     "claude": {

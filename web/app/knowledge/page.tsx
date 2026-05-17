@@ -84,6 +84,33 @@ interface KnowledgeBase {
   };
 }
 
+interface CourseScopedKnowledgeBase {
+  name: string;
+  display_name: string;
+  material_id: number;
+  material_title: string;
+  original_filename?: string | null;
+  source_type: string;
+  parse_status: string;
+  rag_provider?: string;
+  is_default: boolean;
+  statistics: KnowledgeBase["statistics"];
+}
+
+interface CourseKbChapter {
+  id: number | null;
+  title: string;
+  order_index: number;
+  knowledge_bases: CourseScopedKnowledgeBase[];
+}
+
+interface CourseKbGroup {
+  id: number;
+  name: string;
+  description: string;
+  chapters: CourseKbChapter[];
+}
+
 interface UploadFile {
   file: File;
   id: string;
@@ -95,6 +122,7 @@ interface UploadFile {
 export default function KnowledgePage() {
   const { t } = useTranslation();
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
+  const [courseKbGroups, setCourseKbGroups] = useState<CourseKbGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -483,6 +511,7 @@ export default function KnowledgePage() {
 
       const baseUrl = apiUrl("");
       const listUrl = apiUrl("/api/v1/knowledge/list");
+      const courseTreeUrl = apiUrl("/api/v1/knowledge/course-tree");
       const healthUrl = apiUrl("/api/v1/knowledge/health");
 
       console.log("馃攳 Fetching knowledge bases...");
@@ -500,12 +529,20 @@ export default function KnowledgePage() {
       }
 
       // Fetch knowledge base list
-      const res = await fetch(listUrl, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+      const [res, courseTreeRes] = await Promise.all([
+        fetch(listUrl, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }),
+        fetch(courseTreeUrl, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }),
+      ]);
 
       console.log("馃摗 Response status:", res.status, res.statusText);
       console.log(
@@ -530,6 +567,9 @@ export default function KnowledgePage() {
       }
 
       const data = await res.json();
+      const courseTreeData = courseTreeRes.ok
+        ? await courseTreeRes.json()
+        : { courses: [] };
       console.log("鉁?Received knowledge bases:", data);
       console.log("鉁?Data type:", Array.isArray(data) ? "array" : typeof data);
       console.log("鉁?Data length:", Array.isArray(data) ? data.length : "N/A");
@@ -541,6 +581,7 @@ export default function KnowledgePage() {
       }
 
       setKbs(data);
+      setCourseKbGroups(courseTreeData.courses || []);
       setError(null); // Clear previous error - empty list is not an error, it's just empty state
     } catch (err: any) {
       console.error("鉂?Error fetching knowledge bases:", err);
@@ -1006,6 +1047,60 @@ export default function KnowledgePage() {
               className="h-36 rounded-3xl border border-white/60 bg-[color:var(--ui-panel)]/88 shadow-[0_12px_40px_rgba(15,23,42,0.16)] backdrop-blur dark:border-slate-700 dark:bg-slate-900/82 animate-pulse"
             />
           ))}
+        </div>
+      )}
+
+      {!loading && courseKbGroups.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-white/85 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
+          <div className="mb-3 flex items-center gap-2">
+            <Layers className="h-5 w-5 text-teal-600" />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              课程资料知识库
+            </h2>
+          </div>
+          <div className="space-y-3">
+            {courseKbGroups.map((course) => (
+              <details key={course.id} className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40">
+                <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  {course.name}
+                </summary>
+                <div className="space-y-3 border-t border-slate-200 p-3 dark:border-slate-800">
+                  {course.chapters.map((chapter) => (
+                    <details key={`${course.id}-${chapter.id ?? "public"}`} open className="rounded-lg bg-white dark:bg-slate-900">
+                      <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        {chapter.title}
+                      </summary>
+                      <div className="grid gap-2 px-3 pb-3 md:grid-cols-2">
+                        {chapter.knowledge_bases.map((kb) => (
+                          <div key={kb.name} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                  {kb.display_name || kb.name}
+                                </div>
+                                <div className="mt-1 truncate text-xs text-slate-500">
+                                  {kb.name} · {kb.rag_provider || "RAG"} · {kb.parse_status}
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  window.location.href = `/knowledge/${encodeURIComponent(kb.name)}/graph`;
+                                }}
+                                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-2 py-1 text-xs font-medium text-teal-700 hover:bg-teal-100 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-200"
+                              >
+                                <Network className="h-3.5 w-3.5" />
+                                图谱
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
         </div>
       )}
 
