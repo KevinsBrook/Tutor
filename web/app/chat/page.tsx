@@ -164,6 +164,7 @@ export default function ChatPage() {
       metadata: {
         source: "chat",
         save_scope: "conversation_until_selected_message",
+        session_id: chatState.sessionId,
         message_count: selectedMessages.length,
         kb_name: chatState.selectedKb || undefined,
         enable_rag: chatState.enableRag,

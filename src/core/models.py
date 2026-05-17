@@ -317,6 +317,13 @@ class ExperimentAnswer(Base):
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
 
     answer_text = Column(Text, nullable=False)
+    # 语音作答过程性评价指标
+    # pause_count：学生回答过程中的明显停顿次数
+    # longest_pause_ms：最长一次停顿时间，单位毫秒
+    # answer_duration_seconds：本题总回答时长，单位秒
+    pause_count = Column(Integer, default=0, nullable=False)
+    longest_pause_ms = Column(Integer, default=0, nullable=False)
+    answer_duration_seconds = Column(Integer, nullable=True)
 
     score_code_understanding = Column(Float, nullable=True)   # 代码理解 2 分
     score_concept_mastery = Column(Float, nullable=True)      # 概念掌握 1 分

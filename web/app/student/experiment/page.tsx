@@ -43,8 +43,15 @@ type AnswerResult = {
   grading_reason: string;
   created_at: string;
 };
+type PauseStat = {
+  pauseCount: number;
+  longestPauseMs: number;
+  answerStartedAt: number | null;
+  lastSpeechAt: number | null;
+};
 
 export default function StudentExperimentPage() {
+  const PAUSE_THRESHOLD_MS = 2000;
   const router = useRouter();
   const { session, isReady } = useAuth();
 
@@ -52,12 +59,13 @@ export default function StudentExperimentPage() {
   const [userRole, setUserRole] = useState("");
 
   const [loading, setLoading] = useState(true);
-
+  
+  const [interimInputs, setInterimInputs] = useState<Record<number, string>>({});
   const [uploading, setUploading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [generatingForId, setGeneratingForId] = useState<number | null>(null);
   const [submittingQuestionId, setSubmittingQuestionId] = useState<number | null>(null);
-
+  
   const [uploadForm, setUploadForm] = useState({
     assignment_no: "",
     experiment_title: "",
@@ -73,9 +81,7 @@ export default function StudentExperimentPage() {
   const [deadlineAt, setDeadlineAt] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
 
-  const [pauseStats, setPauseStats] = useState<
-    Record<number, { pauseCount: number; longestPauseMs: number; answerStartedAt: number }>
-  >({});
+  const [pauseStats, setPauseStats] = useState<Record<number, PauseStat>>({});
 
   const recognitionRef = useRef<any>(null);
   const shouldKeepRecordingRef = useRef(false); 
@@ -245,7 +251,7 @@ export default function StudentExperimentPage() {
         },
         body: JSON.stringify({
           submission_id: submissionId,
-          question_count: Math.floor(Math.random() * 3) + 4, // 4~6
+          question_count: Math.floor(Math.random() * 2) + 4, // 4~6
         }),
       });
 
@@ -317,53 +323,197 @@ export default function StudentExperimentPage() {
       return;
     }
   
+    if (remainingSeconds <= 0) {
+      alert("答题时间已结束，无法继续语音输入");
+      return;
+    }
+  
+    // 如果之前有识别对象，先停止，避免多个识别同时运行
+    if (recognitionRef.current) {
+      shouldKeepRecordingRef.current = false;
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+  
     const recognition = new SpeechRecognition();
+  
     recognition.lang = "zh-CN";
-    recognition.continuous = false;
+  
+    // 关键修改 1：开启连续识别
+    recognition.continuous = true;
+  
+    // 保留中间结果，让学生说话时页面能实时显示文字
     recognition.interimResults = true;
   
+    recognitionRef.current = recognition;
+    shouldKeepRecordingRef.current = true;
     setRecordingQuestionId(questionId);
-  
-    let finalTranscript = "";
-  
-    recognition.onresult = (event: any) => {
-      let interimTranscript = "";
-  
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-  
-      setAnswerInputs((prev) => ({
+    // 开始语音输入时初始化本题的停顿统计。
+    // 如果学生停止后又继续回答，则保留原来的停顿次数和开始时间。
+    const startTime = Date.now();
+    setPauseStats((prev) => {
+      const old = prev[questionId];
+
+      return {
         ...prev,
-        [questionId]: `${finalTranscript}${interimTranscript}`,
-      }));
+        [questionId]: {
+          pauseCount: old?.pauseCount ?? 0,
+          longestPauseMs: old?.longestPauseMs ?? 0,
+          answerStartedAt: old?.answerStartedAt ?? startTime,
+          lastSpeechAt: old?.lastSpeechAt ?? startTime,
+        },
+      };
+    });
+  
+    // 保留已有回答内容，避免自动重启后把前面的识别文本清空
+    let finalTranscript = answerInputs[questionId] || "";
+  
+    const hasAnswerTimeLeft = () => {
+      if (!deadlineAt) return true;
+  
+      const normalizedDeadline =
+        typeof deadlineAt === "string" && deadlineAt.includes("T")
+          ? deadlineAt
+          : String(deadlineAt).replace(" ", "T");
+  
+      return Date.now() < new Date(normalizedDeadline).getTime();
     };
   
+    recognition.onresult = (event: any) => {
+      let newInterimTranscript = "";
+      let hasNewFinal = false;
+    
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const transcript = result[0]?.transcript || "";
+    
+        if (result.isFinal) {
+          finalTranscript += transcript;
+          hasNewFinal = true;
+        } else {
+          newInterimTranscript += transcript;
+        }
+      }
+    
+      // 只把最终结果写入正式回答框
+      // 只把最终结果写入正式回答框，同时根据两次最终识别结果之间的时间差统计停顿。
+      if (hasNewFinal) {
+        const now = Date.now();
+
+        setPauseStats((prev) => {
+          const old = prev[questionId] || {
+            pauseCount: 0,
+            longestPauseMs: 0,
+            answerStartedAt: now,
+            lastSpeechAt: now,
+          };
+
+          const lastSpeechAt = old.lastSpeechAt ?? now;
+          const gap = now - lastSpeechAt;
+          const isPause = gap > PAUSE_THRESHOLD_MS;
+
+          return {
+            ...prev,
+            [questionId]: {
+              ...old,
+              pauseCount: old.pauseCount + (isPause ? 1 : 0),
+              longestPauseMs: isPause
+                ? Math.max(old.longestPauseMs, gap)
+                : old.longestPauseMs,
+              lastSpeechAt: now,
+            },
+          };
+        });
+
+        setAnswerInputs((prev) => {
+          if (prev[questionId] === finalTranscript) return prev;
+          return {
+            ...prev,
+           [questionId]: finalTranscript,
+          };
+        });
+      }
+    
+      // 中间结果单独显示，不写进正式回答框
+      setInterimInputs((prev) => {
+        if (prev[questionId] === newInterimTranscript) return prev;
+        return {
+          ...prev,
+          [questionId]: newInterimTranscript,
+        };
+      });
+    };
     recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event);
-      alert("语音识别失败，请重试");
+      console.warn("Speech recognition error:", event);
+  
+      // 停顿过久时，Chrome 可能会触发 no-speech。
+      // 这种情况不要弹窗，也不要真正结束，交给 onend 自动重启。
+      if (event.error === "no-speech") {
+        return;
+      }
+  
+      // 用户主动停止时可能触发 aborted，也不需要报错
+      if (event.error === "aborted") {
+        return;
+      }
+  
+      shouldKeepRecordingRef.current = false;
       setRecordingQuestionId(null);
+      alert("语音识别失败，请重试");
     };
   
     recognition.onend = () => {
-      setRecordingQuestionId(null);
+      if (!shouldKeepRecordingRef.current || !hasAnswerTimeLeft()) {
+        setInterimInputs((prev) => ({
+          ...prev,
+          [questionId]: "",
+        }));
+    
+        setRecordingQuestionId(null);
+        recognitionRef.current = null;
+        shouldKeepRecordingRef.current = false;
+        return;
+      }
+    
+      setTimeout(() => {
+        try {
+          if (shouldKeepRecordingRef.current && hasAnswerTimeLeft()) {
+            recognition.start();
+          }
+        } catch (error) {
+          console.warn("语音识别自动重启失败：", error);
+        }
+      }, 250);
     };
   
-    recognition.start();
-  
-    // 挂到 window 上，方便 stop 时结束当前识别
-    (window as any).__currentRecognition = recognition;
+    try {
+      recognition.start();
+      (window as any).__currentRecognition = recognition;
+    } catch (error) {
+      console.warn("语音识别启动失败：", error);
+      shouldKeepRecordingRef.current = false;
+      setRecordingQuestionId(null);
+    }
   };
   const handleStopSpeech = () => {
     shouldKeepRecordingRef.current = false;
+  
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (error) {
+        console.warn("停止语音识别失败：", error);
+      }
+      recognitionRef.current = null;
     }
+  
+    if (recordingQuestionId !== null) {
+      setInterimInputs((prev) => ({
+        ...prev,
+        [recordingQuestionId]: "",
+      }));
+    }
+  
     setRecordingQuestionId(null);
   };
   const handleSubmitAnswer = async (questionId: number) => {
@@ -650,6 +800,17 @@ export default function StudentExperimentPage() {
                           {submittingQuestionId === q.id ? "评分中..." : "提交回答并评分"}
                         </button>
 
+                      </div>
+                      <div className="mt-2 text-sm text-slate-500">
+                        停顿次数：{pauseStats[q.id]?.pauseCount || 0}；
+                        最长停顿：
+                        {Math.round((pauseStats[q.id]?.longestPauseMs || 0) / 1000)}
+                        秒
+                        {interimInputs[q.id] && (
+                          <span className="ml-2 text-slate-400">
+                            正在识别：{interimInputs[q.id]}
+                          </span>
+                        )}
                       </div>
 
                       {result && (
