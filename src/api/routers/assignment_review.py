@@ -14,10 +14,11 @@ import shutil
 import uuid
 import re
 import time
+import tempfile
 from typing import Any
 import json
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -207,17 +208,37 @@ def _extract_text_from_file(path: str | Path, limit: int = 12000) -> str:
     suffix = file_path.suffix.lower()
     try:
         if suffix == ".pdf":
-            from pypdf import PdfReader
-
-            reader = PdfReader(str(file_path))
             pages = []
-            for page in reader.pages[:20]:
-                text = page.extract_text() or ""
-                if text.strip():
-                    pages.append(text.strip())
+            try:
+                from pypdf import PdfReader
+
+                reader = PdfReader(str(file_path))
+                for page in reader.pages[:20]:
+                    text = page.extract_text() or ""
+                    if text.strip():
+                        pages.append(text.strip())
+            except Exception:
+                pages = []
+            if not pages:
+                try:
+                    import fitz
+
+                    with fitz.open(str(file_path)) as doc:
+                        for page in doc[:20]:
+                            text = page.get_text("text") or ""
+                            if text.strip():
+                                pages.append(text.strip())
+                except Exception:
+                    pages = []
             return "\n".join(pages)[:limit]
         if suffix in {".txt", ".md", ".rtf", ".html", ".htm"}:
             return file_path.read_text(encoding="utf-8", errors="ignore")[:limit]
+        if suffix == ".docx":
+            from docx import Document
+
+            document = Document(str(file_path))
+            paragraphs = [p.text.strip() for p in document.paragraphs if p.text.strip()]
+            return "\n".join(paragraphs)[:limit]
     except Exception:
         return ""
     return ""
@@ -496,6 +517,84 @@ def _split_sentences(text: str, limit: int = 40) -> list[str]:
     return items
 
 
+_CN_NUMERAL_VALUES = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+
+def _chinese_numeral_to_int(value: str) -> int | None:
+    value = value.strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return int(value)
+    if value == "十":
+        return 10
+    if "十" in value:
+        left, _, right = value.partition("十")
+        tens = _CN_NUMERAL_VALUES.get(left, 1) if left else 1
+        ones = _CN_NUMERAL_VALUES.get(right, 0) if right else 0
+        return tens * 10 + ones
+    if len(value) == 1:
+        return _CN_NUMERAL_VALUES.get(value)
+    total = 0
+    for char in value:
+        number = _CN_NUMERAL_VALUES.get(char)
+        if number is None:
+            return None
+        total = total * 10 + number
+    return total
+
+
+def _normalize_assignment_lines(text: str) -> list[str]:
+    normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\u3000", " ")
+    lines: list[str] = []
+    for raw in normalized.splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line:
+            continue
+        if re.fullmatch(r"第\s*\d+\s*页", line, flags=re.I):
+            continue
+        lines.append(line)
+    return lines
+
+
+def _is_scoring_reference_heading(line: str) -> bool:
+    compact = re.sub(r"\s+", "", line or "")
+    return bool(re.match(r"^(评分参考|评分标准|评分细则|参考答案|答案解析|参考解答)", compact))
+
+
+def _extract_score_value(text: str, search_limit: int = 120) -> float:
+    match = re.search(r"(?:共\s*)?(\d+(?:\.\d+)?)\s*分", str(text or "")[:search_limit])
+    return float(match.group(1)) if match else 0.0
+
+
+def _extract_count_value(text: str) -> int | None:
+    match = re.search(r"(\d+)\s*[道个]?\s*(?:题|小题)", text or "")
+    return int(match.group(1)) if match else None
+
+
+def _extract_per_question_score(text: str) -> float:
+    match = re.search(r"每\s*(?:题|小题)\s*(\d+(?:\.\d+)?)\s*分", text or "")
+    return float(match.group(1)) if match else 0.0
+
+
+def _question_sort_key(value: str) -> tuple[int, str]:
+    numeric = _chinese_numeral_to_int(value)
+    return (numeric if numeric is not None else 10_000, value)
+
+
 def _extract_question_blocks(title: str, description: str, files: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     raw_text = _assignment_text(title, description, files or [])
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
@@ -526,6 +625,126 @@ def _extract_question_blocks(title: str, description: str, files: list[dict[str,
     return blocks[:20]
 
 
+def _extract_question_blocks(title: str, description: str, files: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    raw_text = _assignment_text(title, description, files or [])
+    lines = _normalize_assignment_lines(raw_text)
+    blocks: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    section: dict[str, Any] | None = None
+    sections: list[dict[str, Any]] = []
+    section_pattern = re.compile(r"^([一二三四五六七八九十]+|[IVX]+)\s*[、.．]\s*(.+)$", flags=re.I)
+    question_patterns = [
+        re.compile(r"^第\s*([一二三四五六七八九十\d]+)\s*[题問问]\s*[：:、.．)]?\s*(.*)$"),
+        re.compile(r"^(\d{1,3})\s*[.．、)]\s*(.+)$"),
+        re.compile(r"^\(?([一二三四五六七八九十]+)\)?\s*[.．、)]\s*(.+)$"),
+    ]
+
+    def finish_current() -> None:
+        nonlocal current
+        if current:
+            current["text"] = str(current.get("text", "")).strip()
+            blocks.append(current)
+            if section is not None:
+                section.setdefault("blocks", []).append(current)
+        current = None
+
+    for line in lines:
+        if _is_scoring_reference_heading(line):
+            finish_current()
+            break
+
+        section_match = section_pattern.match(line)
+        if section_match and re.search(r"(题|作业|练习|问答|选择|填空|判断|简答|计算|分析|案例|实验|编程|设计|综合)", section_match.group(2)):
+            finish_current()
+            section = {
+                "label": section_match.group(1),
+                "title": section_match.group(2).strip(),
+                "total_score": _extract_score_value(section_match.group(2)),
+                "per_question_score": _extract_per_question_score(section_match.group(2)),
+                "expected_count": _extract_count_value(section_match.group(2)),
+                "blocks": [],
+            }
+            sections.append(section)
+            continue
+
+        match = None
+        for pattern in question_patterns:
+            match = pattern.match(line)
+            if match:
+                break
+        if match:
+            finish_current()
+            raw_no = re.sub(r"\s+", "", match.group(1))
+            body = match.group(2).strip() or line
+            prefix = f"{section['label']}." if section else ""
+            current = {
+                "question_no": f"{prefix}{raw_no}",
+                "local_no": raw_no,
+                "section": section.get("title", "") if section else "",
+                "section_label": section.get("label", "") if section else "",
+                "text": body,
+                "score": _extract_score_value(body),
+            }
+            continue
+
+        if current:
+            current["text"] = f"{current.get('text', '')}\n{line}".strip()
+
+    finish_current()
+    if not blocks and raw_text.strip():
+        blocks = [
+            {
+                "question_no": "1",
+                "local_no": "1",
+                "section": "",
+                "section_label": "",
+                "text": raw_text.strip(),
+                "score": _extract_score_value(raw_text),
+            }
+        ]
+
+    for block in blocks:
+        if not float(block.get("score") or 0):
+            block["score"] = _extract_score_value(str(block.get("text", "")))
+
+    for sec in sections:
+        sec_blocks = sec.get("blocks", [])
+        if not sec_blocks:
+            continue
+        missing = [item for item in sec_blocks if not float(item.get("score") or 0)]
+        per_question = float(sec.get("per_question_score") or 0)
+        if per_question:
+            for item in missing:
+                item["score"] = per_question
+            continue
+        total_score = float(sec.get("total_score") or 0)
+        if total_score:
+            assigned = sum(float(item.get("score") or 0) for item in sec_blocks)
+            remaining = max(0.0, total_score - assigned)
+            if missing and remaining:
+                base = round(remaining / len(missing), 2)
+                for idx, item in enumerate(missing):
+                    item["score"] = base
+                    if idx == len(missing) - 1:
+                        item["score"] = round(remaining - base * (len(missing) - 1), 2)
+
+    assigned_total = sum(float(item.get("score") or 0) for item in blocks)
+    if blocks and assigned_total <= 0:
+        base = round(100 / len(blocks), 2)
+        for idx, item in enumerate(blocks):
+            item["score"] = base
+            if idx == len(blocks) - 1:
+                item["score"] = round(100 - base * (len(blocks) - 1), 2)
+
+    blocks.sort(
+        key=lambda item: (
+            _question_sort_key(str(item.get("section_label") or "")),
+            _question_sort_key(str(item.get("local_no") or item.get("question_no") or "")),
+        )
+    )
+    return blocks
+
+
 def _coerce_criteria_items(items: Any, total_score: float = 100) -> list[ScoringCriterion]:
     if not isinstance(items, list):
         return []
@@ -541,8 +760,8 @@ def _coerce_criteria_items(items: Any, total_score: float = 100) -> list[Scoring
             ScoringCriterion(
                 id=str(item.get("id") or _criterion_id(idx)),
                 question_no=str(item.get("question_no") or item.get("question") or "第1题"),
-                criterion=criterion[:160],
-                answer_hint=str(item.get("answer_hint") or item.get("description") or "").strip()[:240],
+                criterion=criterion[:360],
+                answer_hint=str(item.get("answer_hint") or item.get("description") or "").strip()[:480],
                 score=float(item.get("score") or item.get("max_score") or 0),
                 keywords=[str(word).strip() for word in keywords if str(word).strip()][:8],
                 knowledge_point=str(item.get("knowledge_point") or "").strip(),
@@ -670,10 +889,20 @@ async def _llm_generate_scoring_criteria(
     except Exception:
         return []
 
+    question_blocks = _extract_question_blocks(title, description, files)
     prompt = {
         "title": title,
         "description": description,
         "assignment_text": _assignment_text(title, description, files or [])[:6000],
+        "question_blocks": [
+            {
+                "question_no": block.get("question_no"),
+                "score": block.get("score"),
+                "section": block.get("section"),
+                "text": block.get("text"),
+            }
+            for block in question_blocks
+        ],
         "task_points": task_points or [],
         "knowledge_links": knowledge_links or [],
         "expected_total_score": expected_total_score,
@@ -693,7 +922,8 @@ async def _llm_generate_scoring_criteria(
         )
         parsed = parse_json_response(response, fallback={})
         raw_items = parsed.get("criteria_items") if isinstance(parsed, dict) else parsed
-        return _coerce_criteria_items(raw_items, expected_total_score)
+        criteria = _coerce_criteria_items(raw_items, expected_total_score)
+        return _ensure_criteria_coverage(criteria, question_blocks, expected_total_score)
     except Exception:
         return []
 
@@ -732,6 +962,158 @@ def _criteria_to_rubric(criteria: list[ScoringCriterion]) -> list[RubricItem]:
         RubricItem(name=item.criterion, description=item.answer_hint, score=item.score)
         for item in criteria
     ]
+
+
+def _split_requirement_points(text: str) -> list[str]:
+    cleaned = _clean_question_text(text)
+    cleaned = re.sub(r"^\s*[\w一二三四五六七八九十.．、()（） -]+题[:：]?", "", cleaned).strip()
+    cleaned = re.sub(r"（\s*\d+(?:\.\d+)?\s*分\s*）|\(\s*\d+(?:\.\d+)?\s*分\s*\)", "", cleaned).strip()
+    if not cleaned:
+        return []
+    if "请回答" in cleaned or cleaned.count("？") + cleaned.count("?") >= 2:
+        parts = [part.strip(" ：:；;。") for part in re.split(r"[？?；;]", cleaned) if part.strip(" ：:；;。")]
+        if len(parts) >= 2:
+            return parts[:6]
+    return [cleaned]
+
+
+def _clean_question_text(text: str) -> str:
+    value = re.sub(r"\s*\n\s*", " ", text or "")
+    value = re.sub(r"(?<=[\u4e00-\u9fa5])\s+(?=[\u4e00-\u9fa5])", "", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
+def _criterion_hint_from_question(question_text: str, point: str) -> str:
+    text = _clean_question_text(question_text)
+    point = _clean_question_text(point)
+    if "选择题" in text or re.search(r"\b[A-D][.．、]", text):
+        return f"需给出正确选项，并用题干中的协议概念说明依据：{point[:320]}"
+    if "判断题" in text or "（ ）" in text or "( )" in text:
+        return f"需判断正误，并说明为什么该说法成立或不成立：{point[:320]}"
+    if "填空题" in text or "____" in text or "__" in text:
+        return f"需完整填写所有空项，单位和术语要准确：{point[:320]}"
+    if "计算题" in text or re.search(r"\b(cwnd|ssthresh|RTT|MSS|KB)\b", text, flags=re.I):
+        return f"需列出公式、过程和最终结果，单位要准确：{point[:320]}"
+    if "画出" in text or "过程" in text:
+        return f"需按步骤说明关键过程，并解释原因或作用：{point[:320]}"
+    return f"需围绕题目要求完整作答，覆盖关键概念、理由和结论：{point[:320]}"
+
+
+def _criteria_from_question_blocks(blocks: list[dict[str, Any]], total_score: float = 100) -> list[ScoringCriterion]:
+    criteria: list[ScoringCriterion] = []
+    for block in blocks:
+        question_no = str(block.get("question_no") or f"Q{len(criteria) + 1}")
+        question_text = _clean_question_text(str(block.get("text") or ""))
+        question_score = float(block.get("score") or 0)
+        points = _split_requirement_points(question_text) or [question_text or question_no]
+        base = round(question_score / len(points), 2) if question_score > 0 else 0.0
+        for idx, point in enumerate(points):
+            score = base
+            if question_score > 0 and idx == len(points) - 1:
+                score = round(question_score - base * (len(points) - 1), 2)
+            criteria.append(
+                ScoringCriterion(
+                    id=_criterion_id(len(criteria)),
+                    question_no=question_no,
+                    criterion=point[:360],
+                    answer_hint=_criterion_hint_from_question(question_text, point),
+                    score=score,
+                    keywords=list(_normalize_keywords(point))[:8],
+                )
+            )
+    return _normalize_criteria_scores(criteria, total_score)
+
+
+def _normalize_criteria_scores(criteria: list[ScoringCriterion], total_score: float = 100) -> list[ScoringCriterion]:
+    if not criteria:
+        return []
+    total = total_score if total_score > 0 else 100
+    assigned = sum(max(0.0, item.score) for item in criteria)
+    if assigned <= 0:
+        base = round(total / len(criteria), 2)
+        for idx, item in enumerate(criteria):
+            item.score = base
+            if idx == len(criteria) - 1:
+                item.score = round(total - base * (len(criteria) - 1), 2)
+        return criteria
+    if abs(assigned - total) > 0.01:
+        ratio = total / assigned
+        for item in criteria:
+            item.score = round(max(0.0, item.score) * ratio, 2)
+        diff = round(total - sum(item.score for item in criteria), 2)
+        criteria[-1].score = round(criteria[-1].score + diff, 2)
+    return criteria
+
+
+def _ensure_criteria_coverage(
+    criteria: list[ScoringCriterion],
+    blocks: list[dict[str, Any]],
+    total_score: float = 100,
+) -> list[ScoringCriterion]:
+    if not blocks:
+        return _normalize_criteria_scores(criteria, total_score)
+    valid_question_nos = {str(block.get("question_no") or "").strip() for block in blocks}
+    local_counts: dict[str, int] = {}
+    for block in blocks:
+        local = str(block.get("local_no") or "").strip()
+        if local:
+            local_counts[local] = local_counts.get(local, 0) + 1
+    alias_to_question_no = {
+        str(block.get("local_no") or "").strip(): str(block.get("question_no") or "").strip()
+        for block in blocks
+        if local_counts.get(str(block.get("local_no") or "").strip(), 0) == 1
+    }
+
+    for item in criteria:
+        raw_no = str(item.question_no).strip()
+        if raw_no in alias_to_question_no:
+            item.question_no = alias_to_question_no[raw_no]
+
+    covered = {str(item.question_no).strip() for item in criteria if str(item.question_no).strip() in valid_question_nos}
+    coverage_threshold = max(1, int(len(blocks) * 0.8 + 0.999))
+    if criteria and len(covered) < coverage_threshold:
+        criteria = []
+        covered = set()
+    elif criteria:
+        criteria = [item for item in criteria if str(item.question_no).strip() in valid_question_nos]
+    missing_blocks = [block for block in blocks if str(block.get("question_no") or "").strip() not in covered]
+    if missing_blocks:
+        criteria.extend(_criteria_from_question_blocks(missing_blocks, sum(float(block.get("score") or 0) for block in missing_blocks) or total_score))
+    for idx, item in enumerate(criteria):
+        item.id = item.id or _criterion_id(idx)
+    return _normalize_criteria_scores(criteria, total_score)
+
+
+def _fallback_scoring_criteria(
+    *,
+    title: str,
+    description: str,
+    files: list[dict[str, Any]] | None = None,
+    task_points: list[str] | None = None,
+    knowledge_links: list[dict[str, Any]] | None = None,
+    expected_total_score: float = 100,
+) -> list[ScoringCriterion]:
+    blocks = _extract_question_blocks(title, description, files)
+    criteria = _criteria_from_question_blocks(blocks, expected_total_score) if blocks else []
+    if not criteria:
+        for point in (task_points or [])[:12]:
+            criteria.append(
+                ScoringCriterion(
+                    id=_criterion_id(len(criteria)),
+                    question_no="综合要求",
+                    criterion=str(point)[:160],
+                    answer_hint=f"围绕作业要求作答：{str(point)[:180]}",
+                    score=0,
+                    keywords=list(_normalize_keywords(str(point)))[:8],
+                )
+            )
+    for criterion, link in zip(criteria, knowledge_links or []):
+        criterion.knowledge_point = str(link.get("knowledge_point") or "")
+        criterion.knowledge_point_id = link.get("knowledge_point_id")
+        if criterion.knowledge_point and criterion.knowledge_point not in criterion.keywords:
+            criterion.keywords.append(criterion.knowledge_point)
+    return _normalize_criteria_scores(criteria, expected_total_score)
 
 
 def _normalize_keywords(text: str) -> set[str]:
@@ -1261,17 +1643,54 @@ async def _build_generated_practice(strategy: str, wrong_item: dict[str, Any]) -
 
 
 @router.post("/teacher/rubric-draft", response_model=RubricDraftResponse)
-async def generate_rubric_draft(request: RubricDraftRequest, db: Session = Depends(get_db)):
-    task_points = _split_task_points(
-        title=request.title,
-        description=request.description,
-        file_names=request.file_names,
+async def generate_rubric_draft(request: Request, db: Session = Depends(get_db)):
+    content_type = request.headers.get("content-type", "")
+    temp_dir_ctx: tempfile.TemporaryDirectory[str] | None = None
+    stored_files: list[dict[str, Any]] = []
+
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        title = str(form.get("title") or "")
+        description = str(form.get("description") or "")
+        course_id = int(form["course_id"]) if form.get("course_id") else None
+        chapter_id = int(form["chapter_id"]) if form.get("chapter_id") else None
+        expected_total_score = float(form.get("expected_total_score") or 100)
+        upload_files = [
+            item
+            for item in form.getlist("files")
+            if getattr(item, "filename", None) and getattr(item, "file", None)
+        ]
+        if upload_files:
+            temp_dir_ctx = tempfile.TemporaryDirectory(prefix="assignment_rubric_")
+            stored_files = _save_uploaded_files(upload_files, Path(temp_dir_ctx.name))
+    else:
+        try:
+            payload = await request.json()
+            parsed = RubricDraftRequest.model_validate(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid rubric draft request: {exc}") from exc
+        title = parsed.title
+        description = parsed.description
+        course_id = parsed.course_id
+        chapter_id = parsed.chapter_id
+        expected_total_score = parsed.expected_total_score
+        stored_files = [{"filename": name} for name in parsed.file_names]
+
+    file_names = [str(file.get("filename", "")) for file in stored_files]
+    extracted_text = "\n".join(
+        text for text in (_extract_text_from_file(file.get("path", "")) for file in stored_files) if text
     )
-    if request.course_id:
-        query = db.query(KnowledgePoint).filter(KnowledgePoint.course_id == request.course_id)
-        if request.chapter_id:
+    enriched_description = "\n".join([description, extracted_text[:4000]]).strip()
+    task_points = _split_task_points(
+        title=title,
+        description=enriched_description,
+        file_names=file_names,
+    )
+    if course_id:
+        query = db.query(KnowledgePoint).filter(KnowledgePoint.course_id == course_id)
+        if chapter_id:
             query = query.filter(
-                (KnowledgePoint.chapter_id == request.chapter_id)
+                (KnowledgePoint.chapter_id == chapter_id)
                 | (KnowledgePoint.chapter_id.is_(None))
             )
         for point in query.order_by(KnowledgePoint.priority.desc()).limit(6).all():
@@ -1284,17 +1703,21 @@ async def generate_rubric_draft(request: RubricDraftRequest, db: Session = Depen
             "总结结果并说明依据",
         ]
 
-    raw_text = "\n".join([request.title, request.description, " ".join(request.file_names)])
-    criteria_items = await _build_scoring_criteria(
-        title=request.title,
-        description=request.description,
-        files=[{"filename": name} for name in request.file_names],
-        task_points=task_points,
-        knowledge_links=[],
-        expected_total_score=request.expected_total_score,
-    )
-    rubric_items = _criteria_to_rubric(criteria_items) or _build_rubric_items(task_points, raw_text, request.expected_total_score)
-    return RubricDraftResponse(task_points=task_points, rubric_items=rubric_items, criteria_items=criteria_items)
+    raw_text = "\n".join([title, description, " ".join(file_names), extracted_text])
+    try:
+        criteria_items = await _build_scoring_criteria(
+            title=title,
+            description=description,
+            files=stored_files,
+            task_points=task_points,
+            knowledge_links=[],
+            expected_total_score=expected_total_score,
+        )
+        rubric_items = _criteria_to_rubric(criteria_items) or _build_rubric_items(task_points, raw_text, expected_total_score)
+        return RubricDraftResponse(task_points=task_points, rubric_items=rubric_items, criteria_items=criteria_items)
+    finally:
+        if temp_dir_ctx:
+            temp_dir_ctx.cleanup()
 
 
 @router.get("/teacher/assignments")
@@ -1476,6 +1899,15 @@ async def confirm_assignment_knowledge_candidates(
 async def confirm_assignment_publish(assignment_id: str, request: ConfirmPublishRequest):
     store = get_assignment_review_store()
     assignment = store.confirm_assignment(assignment_id, request.teacher_username)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found or not owned by teacher")
+    return {"success": True, "assignment": assignment}
+
+
+@router.delete("/teacher/assignments/{assignment_id}")
+async def delete_teacher_assignment(assignment_id: str, request: ConfirmPublishRequest):
+    store = get_assignment_review_store()
+    assignment = store.delete_assignment(assignment_id, request.teacher_username)
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found or not owned by teacher")
     return {"success": True, "assignment": assignment}

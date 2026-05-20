@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import threading
 import time
 import uuid
@@ -144,6 +145,39 @@ class AssignmentReviewStore:
         payload = self._read_json_file(self.paths.assignments_file)
         assignments = payload.get("assignments", [])
         return [a for a in assignments if a.get("teacher_username") == teacher_username]
+
+    def delete_assignment(self, assignment_id: str, teacher_username: str) -> dict[str, Any] | None:
+        with self._lock:
+            payload = self._read_json_file(self.paths.assignments_file)
+            assignments = payload.get("assignments", [])
+            remaining: list[dict[str, Any]] = []
+            deleted: dict[str, Any] | None = None
+
+            for assignment in assignments:
+                if assignment.get("id") == assignment_id:
+                    if assignment.get("teacher_username") != teacher_username:
+                        return None
+                    deleted = assignment
+                    continue
+                remaining.append(assignment)
+
+            if not deleted:
+                return None
+
+            payload["assignments"] = remaining
+            self._write_json_file(self.paths.assignments_file, payload)
+
+            teacher_upload_dir = (
+                self.paths.uploads_root
+                / "teacher"
+                / teacher_username
+                / assignment_id
+            ).resolve()
+            uploads_root = self.paths.uploads_root.resolve()
+            if teacher_upload_dir.exists() and uploads_root in teacher_upload_dir.parents:
+                shutil.rmtree(teacher_upload_dir, ignore_errors=True)
+
+            return deleted
 
     def confirm_assignment(self, assignment_id: str, teacher_username: str) -> dict[str, Any] | None:
         with self._lock:

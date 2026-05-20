@@ -718,7 +718,7 @@ export default function KnowledgeGraphPage() {
               <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300">{error}</p>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {t(
-                  "提示：知识图谱可视化仅支持图谱型RAG提供方（lightrag / raganything / raganything_docling）。",
+                  "提示：知识图谱可视化仅支持图谱型RAG提供方（lightrag）。",
                 )}
               </p>
             </div>

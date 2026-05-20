@@ -48,3 +48,29 @@ def test_assignment_review_store_flow(tmp_path):
     )
     assert appended is not None
     assert len(appended.get("practice_history", [])) == 1
+
+
+def test_assignment_review_store_delete_assignment(tmp_path):
+    store = AssignmentReviewStore(root_dir=tmp_path, repository=JsonAssignmentReviewRepository())
+
+    assignment = store.create_assignment(
+        teacher_username="teacher",
+        title="delete me",
+        description="assignment",
+        rubric_items=[],
+        files=[],
+    )
+    submission = store.create_submission(
+        student_username="student",
+        assignment_id=assignment["id"],
+        answer_text="answer",
+        files=[],
+    )
+
+    deleted = store.delete_assignment(assignment["id"], "teacher")
+
+    assert deleted is not None
+    assert store.get_assignment_by_id(assignment["id"]) is None
+    assert store.list_teacher_assignments("teacher") == []
+    submissions_payload = store._read_json_file(store.paths.submissions_file)
+    assert any(item["id"] == submission["id"] for item in submissions_payload["submissions"])

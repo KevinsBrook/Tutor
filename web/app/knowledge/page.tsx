@@ -119,6 +119,8 @@ interface UploadFile {
   size: number;
 }
 
+const VISIBLE_RAG_PROVIDER_IDS = new Set(["llamaindex", "lightrag"]);
+
 export default function KnowledgePage() {
   const { t } = useTranslation();
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
@@ -145,6 +147,12 @@ export default function KnowledgePage() {
     message: string;
     type: "success" | "error" | "info";
   } | null>(null);
+
+  const getVisibleRagProviderLabel = (provider?: string) => {
+    if (provider === "llamaindex") return t("LlamaIndex");
+    if (provider === "lightrag") return t("LightRAG");
+    return "";
+  };
 
   // Helper function to generate unique ID
   const generateFileId = () => Math.random().toString(36).substring(2, 15);
@@ -193,7 +201,6 @@ export default function KnowledgePage() {
       "rst",
       "log",
     ],
-    // RAGAnything: Full multimodal support - PDF, Word, Images, and plain text (uses MinerU)
     raganything: [
       "pdf",
       "doc",
@@ -240,6 +247,9 @@ export default function KnowledgePage() {
 
   // Get file type hint for current provider
   const getFileTypeHint = (provider: string): string => {
+    if (!VISIBLE_RAG_PROVIDER_IDS.has(provider)) {
+      return PROVIDER_FILE_HINTS.llamaindex;
+    }
     return PROVIDER_FILE_HINTS[provider] || PROVIDER_FILE_HINTS.llamaindex;
   };
 
@@ -633,7 +643,10 @@ export default function KnowledgePage() {
         const res = await fetch(apiUrl("/api/v1/knowledge/rag-providers"));
         if (res.ok) {
           const data = await res.json();
-          setRagProviders(data.providers || []);
+          const visibleProviders = (data.providers || []).filter((provider: { id: string }) =>
+            VISIBLE_RAG_PROVIDER_IDS.has(provider.id),
+          );
+          setRagProviders(visibleProviders);
         }
       } catch (err) {
         console.error("Failed to fetch RAG providers:", err);
@@ -1127,23 +1140,16 @@ export default function KnowledgePage() {
                           {t("Default")}
                         </span>
                       )}
-                      {kb.statistics.rag_provider && (
+                      {kb.statistics.rag_provider &&
+                        VISIBLE_RAG_PROVIDER_IDS.has(kb.statistics.rag_provider) && (
                         <span
                           className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
-                            kb.statistics.rag_provider === "raganything"
-                              ? "bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 border-purple-100 dark:border-purple-800"
-                              : kb.statistics.rag_provider === "lightrag"
+                            kb.statistics.rag_provider === "lightrag"
                                 ? "bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800"
                                 : "bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-800"
                           }`}
                         >
-                          {kb.statistics.rag_provider === "raganything"
-                            ? t("RAG-Anything")
-                            : kb.statistics.rag_provider === "lightrag"
-                              ? t("LightRAG")
-                              : kb.statistics.rag_provider === "llamaindex"
-                                ? t("LlamaIndex")
-                                : kb.statistics.rag_provider}
+                          {getVisibleRagProviderLabel(kb.statistics.rag_provider)}
                         </span>
                       )}
                     </div>
@@ -1492,7 +1498,6 @@ export default function KnowledgePage() {
                     <>
                       <option value="llamaindex">{t("LlamaIndex")}</option>
                       <option value="lightrag">{t("LightRAG")}</option>
-                      <option value="raganything">{t("RAG-Anything")}</option>
                     </>
                   )}
                 </select>
@@ -1513,9 +1518,6 @@ export default function KnowledgePage() {
                         ),
                         lightrag: t(
                           "Lightweight knowledge graph retrieval, fast processing of text documents.",
-                        ),
-                        raganything: t(
-                          "Multimodal document processing with chart and formula extraction, builds knowledge graphs.",
                         ),
                       };
                       return (
@@ -1704,17 +1706,7 @@ export default function KnowledgePage() {
                   {t("RAG Provider")}
                 </label>
                 <div className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-100 dark:bg-slate-600 text-slate-900 dark:text-slate-100">
-                  {ragProvider === "llamaindex" && t("LlamaIndex")}
-                  {ragProvider === "lightrag" && t("LightRAG")}
-                  {ragProvider === "raganything" && t("RAG-Anything")}
-                  {ragProvider === "raganything_docling" &&
-                    t("RAG-Anything (Docling)")}
-                  {![
-                    "llamaindex",
-                    "lightrag",
-                    "raganything",
-                    "raganything_docling",
-                  ].includes(ragProvider) && ragProvider}
+                  {getVisibleRagProviderLabel(ragProvider) || t("Existing provider")}
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   {t("Keep unchanged to use this KB's existing provider")}

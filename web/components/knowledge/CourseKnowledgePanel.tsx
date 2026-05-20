@@ -110,8 +110,15 @@ interface KnowledgeGraphPreview {
 
 type ModalKind = "course" | "chapter" | "upload" | "point" | null;
 
+const VISIBLE_RAG_PROVIDER_IDS = new Set(["llamaindex", "lightrag"]);
+
+const filterVisibleProviders = (providers: RagProvider[]) =>
+  providers.filter((provider) => VISIBLE_RAG_PROVIDER_IDS.has(provider.id));
+
+const isVisibleRagProvider = (provider?: string | null) =>
+  Boolean(provider && VISIBLE_RAG_PROVIDER_IDS.has(provider));
+
 const FALLBACK_PROVIDERS: RagProvider[] = [
-  { id: "raganything", name: "RAG-Anything", description: "适合课件、教材、图文混合资料" },
   { id: "lightrag", name: "LightRAG", description: "适合轻量知识图谱检索" },
   { id: "llamaindex", name: "LlamaIndex", description: "适合普通文本和 PDF 检索" },
 ];
@@ -187,10 +194,10 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
   const [chapterForm, setChapterForm] = useState({ title: "", description: "", order_index: "1" });
   const [chapterFile, setChapterFile] = useState<File | null>(null);
   const [chapterMaterialForm, setChapterMaterialForm] = useState({ title: "", description: "" });
-  const [chapterProviderId, setChapterProviderId] = useState("raganything");
+  const [chapterProviderId, setChapterProviderId] = useState("llamaindex");
   const [uploadForm, setUploadForm] = useState({ title: "", description: "" });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [providerId, setProviderId] = useState("raganything");
+  const [providerId, setProviderId] = useState("llamaindex");
   const [pointForm, setPointForm] = useState({ name: "", description: "", priority: "3" });
   const [editingPointId, setEditingPointId] = useState<number | null>(null);
   const [pointDraft, setPointDraft] = useState({ name: "", description: "", priority: "3" });
@@ -223,11 +230,11 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
   }, [chapters]);
   const selectedProvider = providers.find((provider) => provider.id === providerId) || providers[0];
   const selectedExtensions =
-    selectedProvider?.supported_extensions || PROVIDER_EXTENSIONS[providerId] || PROVIDER_EXTENSIONS.raganything;
+    selectedProvider?.supported_extensions || PROVIDER_EXTENSIONS[providerId] || PROVIDER_EXTENSIONS.llamaindex;
   const getProviderExtensions = (id: string) =>
     providers.find((provider) => provider.id === id)?.supported_extensions ||
     PROVIDER_EXTENSIONS[id] ||
-    PROVIDER_EXTENSIONS.raganything;
+    PROVIDER_EXTENSIONS.llamaindex;
 
   const requestJson = async <T,>(url: string, options?: RequestInit): Promise<T> => {
     const res = await fetch(apiUrl(url), options);
@@ -239,14 +246,15 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
   const loadProviders = async () => {
     try {
       const data = await requestJson<{ providers?: RagProvider[] }>("/api/v1/knowledge/rag-providers");
-      const next = (data.providers?.length ? data.providers : FALLBACK_PROVIDERS).map((provider) => ({
+      const visibleProviders = filterVisibleProviders(data.providers?.length ? data.providers : FALLBACK_PROVIDERS);
+      const next = (visibleProviders.length ? visibleProviders : FALLBACK_PROVIDERS).map((provider) => ({
         ...provider,
         supported_extensions:
-          provider.supported_extensions || PROVIDER_EXTENSIONS[provider.id] || PROVIDER_EXTENSIONS.raganything,
+          provider.supported_extensions || PROVIDER_EXTENSIONS[provider.id] || PROVIDER_EXTENSIONS.llamaindex,
       }));
       setProviders(next);
-      setProviderId((prev) => (next.some((item) => item.id === prev) ? prev : next[0]?.id || "raganything"));
-      setChapterProviderId((prev) => (next.some((item) => item.id === prev) ? prev : next[0]?.id || "raganything"));
+      setProviderId((prev) => (next.some((item) => item.id === prev) ? prev : next[0]?.id || "llamaindex"));
+      setChapterProviderId((prev) => (next.some((item) => item.id === prev) ? prev : next[0]?.id || "llamaindex"));
     } catch {
       setProviders(FALLBACK_PROVIDERS);
     }
@@ -905,8 +913,10 @@ export default function CourseKnowledgePanel({ courseId }: { courseId?: number }
                               </h3>
                               <p className="mt-1 text-xs text-slate-500">
                                 {SOURCE_LABELS[material.source_type] || material.source_type} ·{" "}
-                                {STATUS_LABELS[material.parse_status] || material.parse_status} ·{" "}
-                                {material.rag_provider || "RAG"}
+                                {STATUS_LABELS[material.parse_status] || material.parse_status}
+                                {isVisibleRagProvider(material.rag_provider) && (
+                                  <> · {material.rag_provider}</>
+                                )}
                               </p>
                             </div>
                             {(isTeacher || (isStudent && material.source_type === "student_note")) && (

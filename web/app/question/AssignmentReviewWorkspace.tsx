@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  Trash2,
   Upload,
 } from "lucide-react";
 
@@ -1262,17 +1263,16 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
     setDraftingRubric(true);
     setMessage("");
     try {
+      const form = new FormData();
+      form.append("title", title.trim());
+      form.append("description", description.trim());
+      if (assignmentCourseId) form.append("course_id", String(assignmentCourseId));
+      if (assignmentChapterId) form.append("chapter_id", String(assignmentChapterId));
+      form.append("expected_total_score", "100");
+      teacherFiles.forEach((f) => form.append("files", f));
       const res = await fetch(apiUrl("/api/v1/assignment-review/teacher/rubric-draft"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          description: description.trim(),
-          file_names: teacherFiles.map((f) => f.name),
-          course_id: assignmentCourseId,
-          chapter_id: assignmentChapterId,
-          expected_total_score: 100,
-        }),
+        body: form,
       });
       const data: RubricDraftApiResponse | { detail?: string } = await res.json();
       if (!res.ok) {
@@ -1315,6 +1315,35 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
       await loadTeacherAssignments();
     } catch (e: any) {
       setMessage(e.message || "发布失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteAssignment = async (assignmentId: string, assignmentTitle: string) => {
+    if (!session?.username) return;
+    const ok = window.confirm(`确定删除作业“${assignmentTitle}”吗？删除后学生端将不再看到该作业。`);
+    if (!ok) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await fetch(apiUrl(`/api/v1/assignment-review/teacher/assignments/${assignmentId}`), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teacher_username: session.username }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "删除失败");
+      setMessage("作业已删除。");
+      setPublishChecks((prev) => {
+        const next = { ...prev };
+        delete next[assignmentId];
+        return next;
+      });
+      await loadTeacherAssignments();
+      await loadTeacherSubmissions();
+    } catch (e: any) {
+      setMessage(e.message || "删除失败");
     } finally {
       setLoading(false);
     }
@@ -2378,6 +2407,16 @@ export default function AssignmentReviewWorkspace({ workspace = "question" }: { 
                 <div className="space-y-3">{teacherAssignments.map((item) => (
                   <div key={item.id} className="rounded-xl border border-slate-200 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium text-slate-900">{item.title}</p><p className="text-xs text-slate-500">创建时间：{formatTime(item.created_at)} · {item.course_name || "未关联课程"}{item.chapter_title ? ` / ${item.chapter_title}` : ""}</p></div><span className={`rounded-full px-3 py-1 text-xs ${item.confirmed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{item.confirmed ? "已发布" : "草稿"}</span></div>
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => deleteAssignment(item.id, item.title)}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />删除作业
+                      </button>
+                    </div>
                     <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
                       <p className="font-medium text-slate-700">关联知识点</p>
                       {(item.knowledge_links || []).length === 0 ? (
